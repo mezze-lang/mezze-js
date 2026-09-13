@@ -106,6 +106,89 @@ impl JsForeign where {
   type_name     = { it } -> __native_polyglot_type_name  { val = it },
 }
 
+## Chainable inherent methods on `Result JsForeign InteropError` — the
+## exact return type of every fallible operation above. Mirrors every
+## method on `impl JsForeign` so users can write
+##
+##     let chart = Js.require { module = "asciichart" }
+##                   .method { name = "plot", args = [counts, opts] }
+##                   .as_str {}
+##
+## without a `match` between every step. Each method threads through
+## the Result: on `Ok` it delegates to the underlying `JsForeign`
+## method; on `Err` it propagates unchanged.
+##
+## The generic `impl Result 'a 'e` (map / get_or / flat_map / …) still
+## applies — this block just adds the JS-idiomatic vocabulary on top
+## for the concrete `Result JsForeign InteropError` type.
+impl Result JsForeign InteropError where {
+  ## ---- JS-idiomatic vocabulary ----
+
+  method = { it, name, args } -> match it is
+    Ok  { val = f } -> f.method { name = name, args = args }
+    Err { error }   -> Err { error = error },
+  new = { it, args } -> match it is
+    Ok  { val = f } -> f.new { args = args }
+    Err { error }   -> Err { error = error },
+  call = { it, args } -> match it is
+    Ok  { val = f } -> f.call { args = args }
+    Err { error }   -> Err { error = error },
+  property = { it, name } -> match it is
+    Ok  { val = f } -> f.property { name = name }
+    Err { error }   -> Err { error = error },
+  set_property = { it, name, val } -> match it is
+    Ok  { val = f } -> f.set_property { name = name, val = val }
+    Err { error }   -> Err { error = error },
+  index = { it, i } -> match it is
+    Ok  { val = f } -> f.index { i = i }
+    Err { error }   -> Err { error = error },
+  set_index = { it, i, val } -> match it is
+    Ok  { val = f } -> f.set_index { i = i, val = val }
+    Err { error }   -> Err { error = error },
+
+  ## ---- Universal InteropLibrary vocabulary ----
+
+  invoke_member = { it, method, args } -> match it is
+    Ok  { val = f } -> f.invoke_member { method = method, args = args }
+    Err { error }   -> Err { error = error },
+  get_member = { it, name } -> match it is
+    Ok  { val = f } -> f.get_member { name = name }
+    Err { error }   -> Err { error = error },
+  has_member = { it, name } -> match it is
+    Ok  { val = f } -> Ok { val = f.has_member { name = name } }
+    Err { error }   -> Err { error = error },
+  execute = { it, args } -> match it is
+    Ok  { val = f } -> f.execute { args = args }
+    Err { error }   -> Err { error = error },
+  instantiate = { it, args } -> match it is
+    Ok  { val = f } -> f.instantiate { args = args }
+    Err { error }   -> Err { error = error },
+  array_at = { it, index } -> match it is
+    Ok  { val = f } -> f.array_at { index = index }
+    Err { error }   -> Err { error = error },
+  array_size = { it } -> match it is
+    Ok  { val = f } -> f.array_size {}
+    Err { error }  -> Err { error = error },
+  as_int = { it } -> match it is
+    Ok  { val = f } -> f.as_int {}
+    Err { error }  -> Err { error = error },
+  as_str = { it } -> match it is
+    Ok  { val = f } -> f.as_str {}
+    Err { error }  -> Err { error = error },
+  as_float = { it } -> match it is
+    Ok  { val = f } -> f.as_float {}
+    Err { error }  -> Err { error = error },
+  as_bool = { it } -> match it is
+    Ok  { val = f } -> f.as_bool {}
+    Err { error }  -> Err { error = error },
+  is_null = { it } -> match it is
+    Ok  { val = f } -> Ok { val = f.is_null {} }
+    Err { error }  -> Err { error = error },
+  type_name = { it } -> match it is
+    Ok  { val = f } -> Ok { val = f.type_name {} }
+    Err { error }  -> Err { error = error },
+}
+
 ## Constructors — lift a Mezze primitive into a JsForeign so it can
 ## be passed as an argument to `.method{}` / `.call{}` etc.
 pub let from_int:   { val: Int   } -> JsForeign = { val } -> __native_js_from_int   { val = val }
