@@ -1,6 +1,6 @@
 [package]
 name    = "mezze-js"
-version = "0.2.0"
+version = "0.2.1"
 
 # Two library entry points, both re-exported to consumers via the
 # package's snake_case module name `mezze_js`:
@@ -22,15 +22,20 @@ version = "0.2.0"
 # provider package's on-disk location) is unused by this template
 # but still substituted by `mez sync`.
 #
-# The install template lands packages under `<dest>/node_modules`;
-# the GraalJS Context reads `NODE_PATH=<dest>` at startup so
-# `require(...)` resolves those modules without any additional
-# runtime plumbing.
+# `npm install --prefix <dir> <pkgs>` treats <dir> as its CWD and
+# drops modules into `<dir>/node_modules/<pkg>/`. So we point
+# `runtime_dir` at `.deps/node` and rely on npm's natural layout —
+# packages land at `.deps/node/node_modules/<pkg>/` and the GraalJS
+# Context reads `NODE_PATH=.deps/node/node_modules` at startup, so
+# `require(...)` resolves them without any user override. Prior
+# 0.2.0 pointed `runtime_dir` at `.deps/node/node_modules`, which
+# forced user projects to set `node_modules =
+# ".deps/node/node_modules/node_modules"` — one directory too many.
 [polyglot.provider]
 language      = "js"
 install       = "npm install --prefix {dest} {packages}"
 runtime_env   = "NODE_PATH"
-runtime_dir   = ".deps/node/node_modules"
+runtime_dir   = ".deps/node"
 
 # ─── Maven coordinates ─────────────────────────────────────────────
 #
