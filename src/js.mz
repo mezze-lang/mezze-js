@@ -92,6 +92,27 @@ impl JsForeign where {
   ## Number of elements in an array-shaped Foreign.
   array_size    = { it } ->
     __native_polyglot_array_size    { val = it },
+  ## Every element of an array-shaped Foreign, as a Mezze seq of Foreigns, in
+  ## ONE crossing. `array_at` in a loop costs one native call and one Result per
+  ## element; this costs one of each for the whole array, and handing a seq the
+  ## other way is already O(1) through `js_list`.
+  array_to_seq  = { it } ->
+    __native_polyglot_array_to_seq   { val = it },
+  ## True iff this Foreign is hash-shaped (a dict / mapping). Interop models
+  ## hashes and members separately, so a mapping is NOT readable through
+  ## `get_member` — it is reached through the three methods below.
+  has_hash      = { it } ->
+    __native_polyglot_has_hash_entries { val = it },
+  ## Number of entries in a hash-shaped Foreign.
+  hash_size     = { it } ->
+    __native_polyglot_hash_size      { val = it },
+  ## Read one entry by key. The key may be a Foreign or a bare Mezze value.
+  hash_at       = { it, key } ->
+    __native_polyglot_read_hash      { val = it, key = key },
+  ## Every entry, as an array-shaped Foreign whose elements are two-element
+  ## `[key, value]` Foreigns — the shape a codec's `decode_map` walks.
+  hash_entries  = { it } ->
+    __native_polyglot_hash_entries   { val = it },
   ## Coerce a numeric Foreign to Int.
   as_int        = { it } -> __native_polyglot_as_long    { val = it },
   ## Coerce a string Foreign to Str.
@@ -196,3 +217,19 @@ pub let from_float: { val: Float } -> JsForeign = { val } -> __native_js_from_fl
 pub let from_str:   { val: Str   } -> JsForeign = { val } -> __native_js_from_str   { val = val }
 pub let from_bool:  { val: Bool  } -> JsForeign = { val } -> __native_js_from_bool  { val = val }
 pub let null_val:   {}            -> JsForeign = {}     -> __native_js_null_val    {}
+
+## Build a JavaScript-visible list from already-wrapped Foreign elements.
+##
+## The interop surface could always READ an array (`array_at`, `array_size`) but
+## never build one, so there was no way to hand a guest a sequence — which is
+## exactly what a codec's `encode_list` has to do. The result is an interop VIEW
+## over the elements, not a copy: nothing is converted until the guest asks.
+pub let js_list: { elems: [JsForeign] } -> JsForeign = { elems } ->
+  __native_js_make_list { elems = elems }
+
+## Build a JavaScript-visible mapping from parallel key and value sequences.
+## Companion to `js_list`, backing a codec's `encode_map` / `encode_record`.
+## Keys keep the order they were given in.
+pub let js_dict: { keys: [JsForeign], vals: [JsForeign] } -> JsForeign = { keys, vals } ->
+  __native_js_make_dict { keys = keys, vals = vals }
+

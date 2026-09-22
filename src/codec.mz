@@ -10,15 +10,15 @@
 ## first-class InteropLibrary value: encoding a scalar is
 ## `js::from_int { val = ... }`, and decoding is `jf.as_int{}`.
 ##
-## Records / lists / maps are NOT implemented here — a caller who wants
-## to hand JS an object should build one explicitly via
-## `Js.eval { source = "({ a: 1, b: 2 })" }` or by driving a JS
-## constructor with `.new{}`. Partial-capability formats compile-error
-## at the offending field per `docs/codec/redesign-2026-09.md`.
+## Lists, maps, records and variants cross too, and without a copy:
+## `js_list` / `js_dict` build an interop VIEW the guest reads on demand, so
+## `[1, 2, 3].to_js {}` is O(1) rather than the O(n) print-into-guest-source
+## workaround it replaces — and JS consumes the result directly, no
+## `Js.eval` round trip.
 use std::codec::core::{
   Format,
-  EncodeScalar, EncodeOption,
-  DecodeScalar, DecodeOption,
+  EncodeScalar, EncodeOption, EncodeList, EncodeMap, EncodeRecord, EncodeVariant,
+  DecodeScalar, DecodeOption, DecodeList, DecodeMap, DecodeRecord, DecodeVariant,
   Encode, Decode,
   CodecCtx, SharedConfig, DecodeError,
   default_shared,
@@ -32,8 +32,10 @@ use std::polyglot::core::{ InteropError }
 # unchanged.
 use mezze_js::js::{
   JsForeign,
-  from_int, from_float, from_str, from_bool, null_val
+  from_int, from_float, from_str, from_bool, null_val,
+  js_list, js_dict
 }
+use std::collections::seq
 use std::float
 use std::int
 use std::char
@@ -72,14 +74,6 @@ impl EncodeOption for JsC having 'out = JsForeign where {
     Some { val = v } -> v
     None -> null_val {},
 }
-
-## No `EncodeRecord`, `EncodeList`, `EncodeMap`, `EncodeVariant` for
-## `JsC` — a single Foreign scalar doesn't naturally carry those
-## shapes without a specific JS container choice (Array vs typed
-## array, Object literal vs Map, …). Types containing those shapes
-## will fail Tier-3 auto-derivation at the offending field path —
-## the caller builds the desired JS shape explicitly through
-## `Js.eval { source = ... }`.
 
 ## ---- Tier 2: decode ----------------------------------------------------
 
@@ -166,6 +160,158 @@ impl DecodeOption for JsC having 'in = JsForeign where {
   decode_option = { it, val, ctx } ->
     if val.is_null{} then Ok { val = None }
     else Ok { val = Some { val = val } },
+}
+
+
+## ---- Tier 2: encode, container shapes ----------------------------------
+##
+## `js_list` / `js_dict` build an interop VIEW over the already-encoded elements,
+## which the guest reads on demand — so there is no container class to choose and
+## no copy to pay for.
+##
+## The cost of not having these was not just an unsupported shape, it was a slow
+## one: with no `EncodeList`, `[1, 2, 3].to_js {}` failed to auto-derive, and
+## the only way to hand a guest a sequence was to PRINT IT INTO GUEST SOURCE and
+## have the guest parse it back — O(n) string building plus an O(n) parse, about
+## 19 us fixed and 0.085 us per element. Through the view it is O(1).
+
+impl EncodeList for JsC having 'out = JsForeign where {
+  encode_list = { it, elems, ctx } -> js_list { elems = elems },
+}
+
+impl EncodeMap for JsC having 'out = JsForeign where {
+  encode_map = { it, entries, ctx } -> js_dict {
+    keys = seq::map { xs = entries, f = { x } -> x.key },
+    vals = seq::map { xs = entries, f = { x } -> x.value },
+  },
+}
+
+## A record becomes a dict keyed by FIELD NAME. The walker hands the keys over
+## as `Str` rather than as `'out`, so unlike the values they are encoded here.
+impl EncodeRecord for JsC having 'out = JsForeign where {
+  encode_record = { it, fields, ctx } -> js_dict {
+    keys = seq::map { xs = fields, f = { x } -> from_str { val = x.key } },
+    vals = seq::map { xs = fields, f = { x } -> x.value },
+  },
+}
+
+## A variant becomes `{ tag }` or `{ tag, value }` — the same two-key shape the
+## JSON codec uses, so a value that crosses as JSON and a value that crosses as
+## a Foreign agree on where the tag lives.
+impl EncodeVariant for JsC having 'out = JsForeign where {
+  encode_variant = { it, tag, payload, ctx } -> match payload is
+    Some { val = p } -> js_dict {
+      keys = [from_str { val = "tag" }, from_str { val = "value" }],
+      vals = [from_str { val = tag }, p],
+    }
+    None -> js_dict {
+      keys = [from_str { val = "tag" }],
+      vals = [from_str { val = tag }],
+    },
+}
+
+## ---- Tier 2: decode, container shapes ----------------------------------
+##
+## Note the asymmetry in what these read: a list is ARRAY-shaped and a dict is
+## HASH-shaped, and interop models those separately — a dict is not reachable
+## through `get_member`, which is why the record and map decoders go through
+## `hash_at` / `hash_entries` rather than the member vocabulary.
+
+## One `[key, value]` pair Foreign, as the entry shape `decode_map` returns.
+let pair_entry_of: { p: JsForeign } -> Option { key: JsForeign, value: JsForeign } =
+  { p } -> match p.array_to_seq {} is
+    Ok { val = kv } -> match seq::get { xs = kv, i = 0 } is
+      Some { val = k } -> match seq::get { xs = kv, i = 1 } is
+        Some { val = v } -> Some { val = { key = k, value = v } }
+        None -> None
+      None -> None
+    Err { error = _ } -> None
+
+## Every pair, or None if any one is malformed — a half-read map is worse than a
+## reported failure.
+let read_pairs:
+  { pairs: [JsForeign], idx: Int, acc: [{ key: JsForeign, value: JsForeign }] }
+  -> Option [{ key: JsForeign, value: JsForeign }] =
+  { pairs, idx, acc } ->
+    if idx >= seq::size { xs = pairs } then Some { val = acc }
+    else match seq::get { xs = pairs, i = idx } is
+      Some { val = p } -> match pair_entry_of { p = p } is
+        Some { val = entry } ->
+          read_pairs { pairs = pairs, idx = idx + 1, acc = seq::add { xs = acc, x = entry } }
+        None -> None
+      None -> None
+
+## The whole array crosses in ONE call rather than one per element: an index walk
+## costs a native call and a `Result` per element, while `js_list` sends a seq the
+## other way in O(1).
+impl DecodeList for JsC having 'in = JsForeign where {
+  decode_list = { it, val, ctx } -> match val.array_to_seq {} is
+    Ok { val = es } -> Ok { val = es }
+    Err { error = _ } -> decode_error {
+      path = ctx.path,
+      message = "Expected an array-shaped Foreign",
+      expected = "List",
+      found = Some { val = val.type_name{} },
+    },
+}
+
+impl DecodeMap for JsC having 'in = JsForeign where {
+  decode_map = { it, val, ctx } -> match val.hash_entries {} is
+    Ok { val = pairs_foreign } -> match pairs_foreign.array_to_seq {} is
+      Ok { val = pairs } -> match read_pairs { pairs = pairs, idx = 0, acc = [] } is
+        Some { val = es } -> Ok { val = es }
+        None -> decode_error {
+          path = ctx.path,
+          message = "Expected every map entry to be a two-element key/value pair",
+          expected = "Map",
+          found = Some { val = val.type_name{} },
+        }
+      Err { error = _ } -> decode_error {
+        path = ctx.path,
+        message = "Foreign map entries are not array-shaped",
+        expected = "Map",
+        found = Some { val = val.type_name{} },
+      }
+    Err { error = _ } -> decode_error {
+      path = ctx.path,
+      message = "Expected a hash-shaped Foreign",
+      expected = "Map",
+      found = Some { val = val.type_name{} },
+    },
+}
+
+impl DecodeRecord for JsC having 'in = JsForeign where {
+  decode_record_field = { it, val, key, ctx } -> match val.hash_at { key = key } is
+    Ok { val = v } -> Ok { val = v }
+    Err { error = _ } -> decode_error {
+      path = ctx.path,
+      message = "Missing field: $(key)",
+      expected = key,
+      found = None,
+    },
+}
+
+## Reads back the `{ tag }` / `{ tag, value }` shape `encode_variant` writes.
+## A missing `value` is a payload-free constructor, not an error — that is the
+## only reading available, since the two are encoded as exactly that difference.
+impl DecodeVariant for JsC having 'in = JsForeign where {
+  decode_variant = { it, val, ctx } -> match val.hash_at { key = "tag" } is
+    Ok { val = t } -> match t.as_str {} is
+      Ok { val = tag } -> match val.hash_at { key = "value" } is
+        Ok { val = p } -> Ok { val = { tag = tag, payload = Some { val = p } } }
+        Err { error = _ } -> Ok { val = { tag = tag, payload = None } }
+      Err { error = _ } -> decode_error {
+        path = ctx.path,
+        message = "Variant tag is not a string",
+        expected = "Str",
+        found = Some { val = t.type_name{} },
+      }
+    Err { error = _ } -> decode_error {
+      path = ctx.path,
+      message = "Expected a Foreign with a 'tag' entry",
+      expected = "Variant",
+      found = Some { val = val.type_name{} },
+    },
 }
 
 ## ---- Tier 4: sugar abilities + blankets --------------------------------
