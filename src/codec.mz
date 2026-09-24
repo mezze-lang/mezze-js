@@ -8,7 +8,7 @@
 ##
 ## Format-author boilerplate is minimal because a `JsForeign` is a
 ## first-class InteropLibrary value: encoding a scalar is
-## `js::from_int { val = ... }`, and decoding is `jf.as_int{}`.
+## `js::from_int { val = ... }`, and decoding is `jf.int{}`.
 ##
 ## Lists, maps, records and variants cross too, and without a copy:
 ## `js_list` / `js_dict` build an interop VIEW the guest reads on demand, so
@@ -78,7 +78,7 @@ impl EncodeOption for JsC having 'out = JsForeign where {
 ## ---- Tier 2: decode ----------------------------------------------------
 
 impl DecodeScalar for JsC having 'in = JsForeign where {
-  decode_int = { it, val, ctx } -> match val.as_int{} is
+  decode_int = { it, val, ctx } -> match val.int{} is
     Ok { val = n } -> Ok { val = n }
     Err { error = _ } -> decode_error {
       path = ctx.path,
@@ -86,7 +86,7 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
       expected = "Int",
       found = Some { val = val.type_name{} },
     },
-  decode_float = { it, val, ctx } -> match val.as_float{} is
+  decode_float = { it, val, ctx } -> match val.float{} is
     Ok { val = n } -> Ok { val = n }
     Err { error = _ } -> decode_error {
       path = ctx.path,
@@ -94,7 +94,7 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
       expected = "Float",
       found = Some { val = val.type_name{} },
     },
-  decode_str = { it, val, ctx } -> match val.as_str{} is
+  decode_str = { it, val, ctx } -> match val.str{} is
     Ok { val = s } -> Ok { val = s }
     Err { error = _ } -> decode_error {
       path = ctx.path,
@@ -102,7 +102,7 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
       expected = "Str",
       found = Some { val = val.type_name{} },
     },
-  decode_bool = { it, val, ctx } -> match val.as_bool{} is
+  decode_bool = { it, val, ctx } -> match val.bool{} is
     Ok { val = b } -> Ok { val = b }
     Err { error = _ } -> decode_error {
       path = ctx.path,
@@ -110,7 +110,7 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
       expected = "Bool",
       found = Some { val = val.type_name{} },
     },
-  decode_frac = { it, val, ctx } -> match val.as_float{} is
+  decode_frac = { it, val, ctx } -> match val.float{} is
     Ok { val = f } -> Ok { val = __native_float_to_frac { f = f } }
     Err { error = _ } -> decode_error {
       path = ctx.path,
@@ -124,7 +124,7 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
     expected = "Bytes",
     found = Some { val = val.type_name{} },
   },
-  decode_char = { it, val, ctx } -> match val.as_str{} is
+  decode_char = { it, val, ctx } -> match val.str{} is
     Ok { val = s } -> match char::from_str { s = s } is
       Some { val = c } -> Ok { val = c }
       None -> decode_error {
@@ -139,7 +139,7 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
       expected = "Char",
       found = Some { val = val.type_name{} },
     },
-  decode_nat = { it, val, ctx } -> match val.as_int{} is
+  decode_nat = { it, val, ctx } -> match val.int{} is
     Ok { val = n } -> match nat::from_int { n = n } is
       Some { val = k } -> Ok { val = k }
       None -> decode_error {
@@ -215,11 +215,11 @@ impl EncodeVariant for JsC having 'out = JsForeign where {
 ## Note the asymmetry in what these read: a list is ARRAY-shaped and a dict is
 ## HASH-shaped, and interop models those separately — a dict is not reachable
 ## through `get_member`, which is why the record and map decoders go through
-## `hash_at` / `hash_entries` rather than the member vocabulary.
+## `key` / `entries` rather than the member vocabulary.
 
 ## One `[key, value]` pair Foreign, as the entry shape `decode_map` returns.
 let pair_entry_of: { p: JsForeign } -> Option { key: JsForeign, value: JsForeign } =
-  { p } -> match p.array_to_seq {} is
+  { p } -> match p.to_seq {} is
     Ok { val = kv } -> match seq::get { xs = kv, i = 0 } is
       Some { val = k } -> match seq::get { xs = kv, i = 1 } is
         Some { val = v } -> Some { val = { key = k, value = v } }
@@ -245,7 +245,7 @@ let read_pairs:
 ## costs a native call and a `Result` per element, while `js_list` sends a seq the
 ## other way in O(1).
 impl DecodeList for JsC having 'in = JsForeign where {
-  decode_list = { it, val, ctx } -> match val.array_to_seq {} is
+  decode_list = { it, val, ctx } -> match val.to_seq {} is
     Ok { val = es } -> Ok { val = es }
     Err { error = _ } -> decode_error {
       path = ctx.path,
@@ -256,8 +256,8 @@ impl DecodeList for JsC having 'in = JsForeign where {
 }
 
 impl DecodeMap for JsC having 'in = JsForeign where {
-  decode_map = { it, val, ctx } -> match val.hash_entries {} is
-    Ok { val = pairs_foreign } -> match pairs_foreign.array_to_seq {} is
+  decode_map = { it, val, ctx } -> match val.entries {} is
+    Ok { val = pairs_foreign } -> match pairs_foreign.to_seq {} is
       Ok { val = pairs } -> match read_pairs { pairs = pairs, idx = 0, acc = [] } is
         Some { val = es } -> Ok { val = es }
         None -> decode_error {
@@ -281,7 +281,7 @@ impl DecodeMap for JsC having 'in = JsForeign where {
 }
 
 impl DecodeRecord for JsC having 'in = JsForeign where {
-  decode_record_field = { it, val, key, ctx } -> match val.hash_at { key = key } is
+  decode_record_field = { it, val, key, ctx } -> match val.key { of = key } is
     Ok { val = v } -> Ok { val = v }
     Err { error = _ } -> decode_error {
       path = ctx.path,
@@ -295,9 +295,9 @@ impl DecodeRecord for JsC having 'in = JsForeign where {
 ## A missing `value` is a payload-free constructor, not an error — that is the
 ## only reading available, since the two are encoded as exactly that difference.
 impl DecodeVariant for JsC having 'in = JsForeign where {
-  decode_variant = { it, val, ctx } -> match val.hash_at { key = "tag" } is
-    Ok { val = t } -> match t.as_str {} is
-      Ok { val = tag } -> match val.hash_at { key = "value" } is
+  decode_variant = { it, val, ctx } -> match val.key { of = "tag" } is
+    Ok { val = t } -> match t.str {} is
+      Ok { val = tag } -> match val.key { of = "value" } is
         Ok { val = p } -> Ok { val = { tag = tag, payload = Some { val = p } } }
         Err { error = _ } -> Ok { val = { tag = tag, payload = None } }
       Err { error = _ } -> decode_error {

@@ -1,38 +1,36 @@
 # JavaScript host-language access (GraalJS).
 #
-# `JsForeign` wraps a JS object (module, function, object literal,
-# array, primitive). All JS interop routes through this type —
-# `perform GraalJs in do ...` gives access to `Js.import`,
-# `Js.require`, and `Js.eval`, each yielding
+# `JsForeign` wraps a JS object (module, function, object literal, array, Map,
+# primitive). All JS interop routes through this type — `perform GraalJs in do
+# ...` gives `Js.import`, `Js.require`, and `Js.eval`, each yielding
 # `Result JsForeign InteropError`.
 #
-# The `impl JsForeign` block below exposes BOTH JS-idiomatic
-# vocabulary (`.method{}` / `.new{}` / `.call{}` / `.property{}` /
-# `.set_property{}` / `.index{}` / `.set_index{}`) AND the universal
-# InteropLibrary primitives (`.invoke_member{}`, `.get_member{}`,
-# `.as_int{}`, `.array_size{}`, `.array_at{}`, …). Every op routes
-# through the same `__native_polyglot_*` natives.
+# The verb set is the smallest that is still COMPLETE against the JS object
+# model, named the JS way: `property`/`set_property`/`has` (obj.x / obj.x=v /
+# `x in obj`), `index`/`set_index` (arr[i]), `key`/`set_key` (Map/dict), `entries`
+# (Object.entries), `len` (.length/.size), `to_seq` (Array.from — drains any
+# iterable), `call`/`method`/`new`, and `int`/`float`/`str`/`bool`/`is_null`/
+# `type_name`. One verb per operation — no `invoke_member`/`get_member` synonyms.
+# Mirrors std::polyglot::jvm's shape with JS vocabulary.
 use std::polyglot::core::{ InteropError }
 
-## Opaque handle to a JS object. Runtime: same `MezzeForeign` Java
-## class every language uses; the newtype gives Mezze-level type
-## safety against mixing JS and non-JS Foreigns.
+## Opaque handle to a JS object. Runtime: the same `MezzeForeign` Java class every
+## language uses; the newtype gives Mezze-level type safety against mixing JS and
+## non-JS Foreigns.
 pub newtype JsForeign = __NativeForeign
 
-## JS host effect. Three module-resolution paths are exposed: `eval`
-## for arbitrary expressions, `require` for CommonJS modules (needs
-## `[polyglot.js]` `node_modules` in the manifest), and `import` for
-## ESM dynamic imports.
+## JS host effect. Three module-resolution paths: `eval` for arbitrary
+## expressions, `require` for CommonJS modules (needs `[polyglot.js]`
+## `node_modules` in the manifest), and `import` for ESM dynamic imports.
 effect Js where {
   import:  { module: Str } -> Result JsForeign InteropError <Js>,
   require: { module: Str } -> Result JsForeign InteropError <Js>,
   eval:    { source: Str } -> Result JsForeign InteropError <Js>
 }
 
-## Default JS host — routes all ops through the ambient Truffle Env's
-## GraalJS interpreter. Zero-field: the polyglot Context is managed
-## by the runtime from `Mezze.toml [polyglot.js]`; the handler
-## carries no user-visible configuration.
+## Default JS host — routes all ops through the ambient Truffle Env's GraalJS
+## interpreter. Zero-field: the polyglot Context is managed by the runtime from
+## `Mezze.toml [polyglot.js]`; the handler carries no user configuration.
 pub type GraalJs = {}
 
 impl Js for GraalJs where {
@@ -41,124 +39,112 @@ impl Js for GraalJs where {
   eval    = { source } -> __native_js_eval    { source = source },
 }
 
-## Inherent methods on JsForeign — JS-idiomatic vocabulary AND the
-## universal InteropLibrary primitives. Every op routes through the
-## same `__native_polyglot_*` natives.
+## The complete JS verb set on a JsForeign. Fallible verbs return
+## `Result JsForeign InteropError` (or a coerced scalar) — chain them directly on
+## the Result via the mirror impl below, no `match` between steps.
 impl JsForeign where {
-  ## ---- JS-idiomatic vocabulary ----
+  ## ---- properties: obj.x / obj.x = v / x in obj ----
 
-  ## Invoke a method by name (JS `obj.name(...args)`).
-  method       = { it, name, args } ->
-    __native_polyglot_invoke_member { val = it, name = name, args = args },
-  ## Instantiate a constructor (JS `new Ctor(...args)`).
-  new          = { it, args } ->
-    __native_polyglot_instantiate   { val = it, args = args },
-  ## Call a callable (JS `f(...args)`).
-  call         = { it, args } ->
-    __native_polyglot_execute       { val = it, args = args },
-  ## Read a named property (JS `obj.name`).
+  ## Read a named property — JS `obj.name`.
   property     = { it, name } ->
-    __native_polyglot_read_member   { val = it, name = name },
-  ## Assign a named property (JS `obj.name = val`).
+    __native_polyglot_read_member  { val = it, name = name },
+  ## Assign a named property — JS `obj.name = val`.
   set_property = { it, name, val } ->
-    __native_polyglot_write_member  { val = it, name = name, new_val = val },
-  ## Read an indexed element (JS `arr[i]`).
-  index        = { it, i } ->
-    __native_polyglot_read_array    { val = it, index = i },
-  ## Assign an indexed element (JS `arr[i] = val`).
-  set_index    = { it, i, val } ->
-    __native_polyglot_write_array   { val = it, index = i, new_val = val },
+    __native_polyglot_write_member { val = it, name = name, new_val = val },
+  ## True iff the property is readable — JS `name in obj`.
+  has          = { it, name } ->
+    __native_polyglot_has_member   { val = it, name = name },
 
-  ## ---- Universal InteropLibrary vocabulary ----
+  ## ---- call / method / construct ----
 
-  ## Invoke a message-named member with args.
-  invoke_member = { it, method, args } ->
-    __native_polyglot_invoke_member { val = it, name = method, args = args },
-  ## Read a named member.
-  get_member    = { it, name } ->
-    __native_polyglot_read_member   { val = it, name = name },
-  ## Membership predicate.
-  has_member    = { it, name } ->
-    __native_polyglot_has_member    { val = it, name = name },
-  ## Execute a callable Foreign.
-  execute       = { it, args } ->
-    __native_polyglot_execute       { val = it, args = args },
-  ## Instantiate a constructable Foreign.
-  instantiate   = { it, args } ->
-    __native_polyglot_instantiate   { val = it, args = args },
-  ## Read an array element by index.
-  array_at      = { it, index } ->
-    __native_polyglot_read_array    { val = it, index = index },
-  ## Number of elements in an array-shaped Foreign.
-  array_size    = { it } ->
-    __native_polyglot_array_size    { val = it },
-  ## Every element of an array-shaped Foreign, as a Mezze seq of Foreigns, in
-  ## ONE crossing. `array_at` in a loop costs one native call and one Result per
-  ## element; this costs one of each for the whole array, and handing a seq the
-  ## other way is already O(1) through `js_list`.
-  array_to_seq  = { it } ->
-    __native_polyglot_array_to_seq   { val = it },
-  ## True iff this Foreign is hash-shaped (a dict / mapping). Interop models
-  ## hashes and members separately, so a mapping is NOT readable through
-  ## `get_member` — it is reached through the three methods below.
-  has_hash      = { it } ->
-    __native_polyglot_has_hash_entries { val = it },
-  ## Number of entries in a hash-shaped Foreign.
-  hash_size     = { it } ->
-    __native_polyglot_hash_size      { val = it },
-  ## Read one entry by key. The key may be a Foreign or a bare Mezze value.
-  hash_at       = { it, key } ->
-    __native_polyglot_read_hash      { val = it, key = key },
-  ## Every entry, as an array-shaped Foreign whose elements are two-element
-  ## `[key, value]` Foreigns — the shape a codec's `decode_map` walks.
-  hash_entries  = { it } ->
-    __native_polyglot_hash_entries   { val = it },
+  ## Call a callable — JS `f(...args)`.
+  call   = { it, args } ->
+    __native_polyglot_execute      { val = it, args = args },
+  ## Call a method by name — JS `obj.name(...args)`.
+  method = { it, name, args } ->
+    __native_polyglot_invoke_member { val = it, name = name, args = args },
+  ## Instantiate a constructor — JS `new Ctor(...args)`.
+  new    = { it, args } ->
+    __native_polyglot_instantiate  { val = it, args = args },
+
+  ## ---- array elements: arr[i] ----
+
+  ## Read an indexed element — JS `arr[i]`.
+  index     = { it, i } ->
+    __native_polyglot_read_array   { val = it, index = i },
+  ## Assign an indexed element — JS `arr[i] = val`.
+  set_index = { it, i, val } ->
+    __native_polyglot_write_array  { val = it, index = i, new_val = val },
+
+  ## ---- Map / dict entries ----
+
+  ## Read a mapping entry by key — JS `map.get(k)`. `key` may be a Foreign or a
+  ## bare Mezze value.
+  key     = { it, of } ->
+    __native_polyglot_read_hash    { val = it, key = of },
+  ## Write a mapping entry — JS `map.set(k, v)`.
+  set_key = { it, of, val } ->
+    __native_polyglot_write_hash   { val = it, key = of, new_val = val },
+  ## Every mapping entry as a seq of two-element `[key, value]` Foreigns — the
+  ## shape a codec's `decode_map` walks (JS `Object.entries` / `Map.entries`).
+  entries = { it } ->
+    __native_polyglot_hash_entries { val = it },
+
+  ## ---- length / iteration ----
+
+  ## Length — array elements or Map entries (JS `.length` / `.size`).
+  len    = { it } ->
+    __native_polyglot_size         { val = it },
+  ## Drain any iterable — an array, generator, Set, or `[Symbol.iterator]` object
+  ## — into a Mezze seq of Foreigns in ONE crossing (JS `Array.from(obj)`). The
+  ## cursor stays inside the runtime, so no mutable iterator reaches pure code.
+  to_seq = { it } ->
+    __native_polyglot_to_seq       { val = it },
+
+  ## ---- value coercions (out) ----
+
   ## Coerce a numeric Foreign to Int.
-  as_int        = { it } -> __native_polyglot_as_long    { val = it },
-  ## Coerce a string Foreign to Str.
-  as_str        = { it } -> __native_polyglot_as_string  { val = it },
+  int       = { it } -> __native_polyglot_as_long    { val = it },
   ## Coerce a numeric Foreign to Float.
-  as_float      = { it } -> __native_polyglot_as_double  { val = it },
+  float     = { it } -> __native_polyglot_as_double  { val = it },
+  ## Coerce a string Foreign to Str.
+  str       = { it } -> __native_polyglot_as_string  { val = it },
   ## Coerce a boolean Foreign to Bool.
-  as_bool       = { it } -> __native_polyglot_as_boolean { val = it },
-  ## True iff this Foreign is the guest-language null / undefined.
-  is_null       = { it } -> __native_polyglot_is_null    { val = it },
-  ## Debug name of the underlying guest-language type.
-  type_name     = { it } -> __native_polyglot_type_name  { val = it },
+  bool      = { it } -> __native_polyglot_as_boolean { val = it },
+  ## True iff this Foreign is JS `null` or `undefined`.
+  is_null   = { it } -> __native_polyglot_is_null    { val = it },
+  ## The underlying guest type name (`typeof` / constructor name).
+  type_name = { it } -> __native_polyglot_type_name  { val = it },
 }
 
-## Chainable inherent methods on `Result JsForeign InteropError` — the
-## exact return type of every fallible operation above. Mirrors every
-## method on `impl JsForeign` so users can write
+## The SAME verbs on `Result JsForeign InteropError` — the return type of every
+## fallible op above — so a pipeline reads as a flat chain
 ##
-##     let chart = Js.require { module = "asciichart" }
-##                   .method { name = "plot", args = [counts, opts] }
-##                   .as_str {}
+##     chart.property { name = "plot" }
+##       .call { args = [data] }
+##       .str {}
 ##
-## without a `match` between every step. Each method threads through
-## the Result: on `Ok` it delegates to the underlying `JsForeign`
-## method; on `Err` it propagates unchanged.
-##
-## The generic `impl Result 'a 'e` (map / get_or / flat_map / …) still
-## applies — this block just adds the JS-idiomatic vocabulary on top
-## for the concrete `Result JsForeign InteropError` type.
+## with no `match` between steps. On `Ok` it delegates to the underlying
+## `JsForeign`; on `Err` it propagates the error. The generic `impl Result 'a 'e`
+## (map / get_or / flat_map / …) still applies on top.
 impl Result JsForeign InteropError where {
-  ## ---- JS-idiomatic vocabulary ----
-
-  method = { it, name, args } -> match it is
-    Ok  { val = f } -> f.method { name = name, args = args }
-    Err { error }   -> Err { error = error },
-  new = { it, args } -> match it is
-    Ok  { val = f } -> f.new { args = args }
-    Err { error }   -> Err { error = error },
-  call = { it, args } -> match it is
-    Ok  { val = f } -> f.call { args = args }
-    Err { error }   -> Err { error = error },
   property = { it, name } -> match it is
     Ok  { val = f } -> f.property { name = name }
     Err { error }   -> Err { error = error },
   set_property = { it, name, val } -> match it is
     Ok  { val = f } -> f.set_property { name = name, val = val }
+    Err { error }   -> Err { error = error },
+  has = { it, name } -> match it is
+    Ok  { val = f } -> Ok { val = f.has { name = name } }
+    Err { error }   -> Err { error = error },
+  call = { it, args } -> match it is
+    Ok  { val = f } -> f.call { args = args }
+    Err { error }   -> Err { error = error },
+  method = { it, name, args } -> match it is
+    Ok  { val = f } -> f.method { name = name, args = args }
+    Err { error }   -> Err { error = error },
+  new = { it, args } -> match it is
+    Ok  { val = f } -> f.new { args = args }
     Err { error }   -> Err { error = error },
   index = { it, i } -> match it is
     Ok  { val = f } -> f.index { i = i }
@@ -166,41 +152,32 @@ impl Result JsForeign InteropError where {
   set_index = { it, i, val } -> match it is
     Ok  { val = f } -> f.set_index { i = i, val = val }
     Err { error }   -> Err { error = error },
-
-  ## ---- Universal InteropLibrary vocabulary ----
-
-  invoke_member = { it, method, args } -> match it is
-    Ok  { val = f } -> f.invoke_member { method = method, args = args }
+  key = { it, of } -> match it is
+    Ok  { val = f } -> f.key { of = of }
     Err { error }   -> Err { error = error },
-  get_member = { it, name } -> match it is
-    Ok  { val = f } -> f.get_member { name = name }
+  set_key = { it, of, val } -> match it is
+    Ok  { val = f } -> f.set_key { of = of, val = val }
     Err { error }   -> Err { error = error },
-  has_member = { it, name } -> match it is
-    Ok  { val = f } -> Ok { val = f.has_member { name = name } }
-    Err { error }   -> Err { error = error },
-  execute = { it, args } -> match it is
-    Ok  { val = f } -> f.execute { args = args }
-    Err { error }   -> Err { error = error },
-  instantiate = { it, args } -> match it is
-    Ok  { val = f } -> f.instantiate { args = args }
-    Err { error }   -> Err { error = error },
-  array_at = { it, index } -> match it is
-    Ok  { val = f } -> f.array_at { index = index }
-    Err { error }   -> Err { error = error },
-  array_size = { it } -> match it is
-    Ok  { val = f } -> f.array_size {}
+  entries = { it } -> match it is
+    Ok  { val = f } -> f.entries {}
     Err { error }  -> Err { error = error },
-  as_int = { it } -> match it is
-    Ok  { val = f } -> f.as_int {}
+  len = { it } -> match it is
+    Ok  { val = f } -> f.len {}
     Err { error }  -> Err { error = error },
-  as_str = { it } -> match it is
-    Ok  { val = f } -> f.as_str {}
+  to_seq = { it } -> match it is
+    Ok  { val = f } -> f.to_seq {}
     Err { error }  -> Err { error = error },
-  as_float = { it } -> match it is
-    Ok  { val = f } -> f.as_float {}
+  int = { it } -> match it is
+    Ok  { val = f } -> f.int {}
     Err { error }  -> Err { error = error },
-  as_bool = { it } -> match it is
-    Ok  { val = f } -> f.as_bool {}
+  float = { it } -> match it is
+    Ok  { val = f } -> f.float {}
+    Err { error }  -> Err { error = error },
+  str = { it } -> match it is
+    Ok  { val = f } -> f.str {}
+    Err { error }  -> Err { error = error },
+  bool = { it } -> match it is
+    Ok  { val = f } -> f.bool {}
     Err { error }  -> Err { error = error },
   is_null = { it } -> match it is
     Ok  { val = f } -> Ok { val = f.is_null {} }
@@ -210,20 +187,17 @@ impl Result JsForeign InteropError where {
     Err { error }  -> Err { error = error },
 }
 
-## Constructors — lift a Mezze primitive into a JsForeign so it can
-## be passed as an argument to `.method{}` / `.call{}` etc.
+## Constructors — lift a Mezze primitive into a JsForeign so it can be passed as
+## an argument to `.method{}` / `.call{}` / `.index{}`. For containers and
+## records, prefer the codec (`x.to_js {}`).
 pub let from_int:   { val: Int   } -> JsForeign = { val } -> __native_js_from_int   { val = val }
 pub let from_float: { val: Float } -> JsForeign = { val } -> __native_js_from_float { val = val }
 pub let from_str:   { val: Str   } -> JsForeign = { val } -> __native_js_from_str   { val = val }
 pub let from_bool:  { val: Bool  } -> JsForeign = { val } -> __native_js_from_bool  { val = val }
 pub let null_val:   {}            -> JsForeign = {}     -> __native_js_null_val    {}
 
-## Build a JavaScript-visible list from already-wrapped Foreign elements.
-##
-## The interop surface could always READ an array (`array_at`, `array_size`) but
-## never build one, so there was no way to hand a guest a sequence — which is
-## exactly what a codec's `encode_list` has to do. The result is an interop VIEW
-## over the elements, not a copy: nothing is converted until the guest asks.
+## Build a JavaScript-visible array from already-wrapped Foreign elements — an
+## interop VIEW over the elements, not a copy. Backs a codec's `encode_list`.
 pub let js_list: { elems: [JsForeign] } -> JsForeign = { elems } ->
   __native_js_make_list { elems = elems }
 
@@ -232,4 +206,3 @@ pub let js_list: { elems: [JsForeign] } -> JsForeign = { elems } ->
 ## Keys keep the order they were given in.
 pub let js_dict: { keys: [JsForeign], vals: [JsForeign] } -> JsForeign = { keys, vals } ->
   __native_js_make_dict { keys = keys, vals = vals }
-
