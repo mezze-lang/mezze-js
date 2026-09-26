@@ -5,23 +5,31 @@
 # ...` gives `Js.import`, `Js.require`, and `Js.eval`, each yielding
 # `Result JsForeign InteropError`.
 #
-# The verb set is the smallest that is still COMPLETE against the JS object
-# model, named the JS way: `property`/`set_property`/`has` (obj.x / obj.x=v /
-# `x in obj`), `index`/`set_index` (arr[i]), `key`/`set_key` (Map/dict), `entries`
+# THIS PACKAGE WRITES NO NATIVES. Every operation delegates to the first-party
+# `Polyglot` effect from `std::polyglot::core`, whose sole handler `Runtime` is
+# the only thing that touches the runtime's native interop surface. Each verb
+# buries its own `perform Runtime in Polyglot.<op> …`, so a user calls
+# `jf.property{}` / `Js.require{}` with no enclosing perform and never sees a
+# `Polyglot.*` op or the guest id `"js"` — that string is baked into this module
+# exactly once per entry point.
+#
+# The verb set is the smallest that is still COMPLETE against the JS object model,
+# named the JS way: `property`/`set_property`/`has` (obj.x / obj.x=v / `x in obj`),
+# `index`/`set_index` (arr[i]), `key`/`set_key` (Map/dict), `entries`
 # (Object.entries), `len` (.length/.size), `to_seq` (Array.from — drains any
 # iterable), `call`/`method`/`new`, and `int`/`float`/`str`/`bool`/`is_null`/
-# `type_name`. One verb per operation — no `invoke_member`/`get_member` synonyms.
-# Mirrors std::polyglot::jvm's shape with JS vocabulary.
-use std::polyglot::core::{ InteropError }
+# `type_name`. Mirrors std::polyglot::jvm's shape with JS vocabulary.
+use std::polyglot::core::{ InteropError, Polyglot, Runtime, Foreign }
 
-## Opaque handle to a JS object. Runtime: the same `MezzeForeign` Java class every
-## language uses; the newtype gives Mezze-level type safety against mixing JS and
-## non-JS Foreigns.
-pub newtype JsForeign = __NativeForeign
+## Opaque handle to a JS object. Wraps the public `Foreign` handle (never the
+## internal native primitive); the newtype gives Mezze-level type safety against
+## mixing JS and non-JS Foreigns.
+pub newtype JsForeign = Foreign
 
-## JS host effect. Three module-resolution paths: `eval` for arbitrary
-## expressions, `require` for CommonJS modules (needs `[polyglot.js]`
-## `node_modules` in the manifest), and `import` for ESM dynamic imports.
+## JS host effect — the typed entry point. Three module-resolution paths: `eval`
+## for arbitrary expressions, `require` for CommonJS modules (needs `[polyglot.js]`
+## `node_modules` in the manifest), and `import` for ESM dynamic imports. The user
+## performs only `GraalJs`; its handler buries `perform Runtime` internally.
 effect Js where {
   import:  { module: Str } -> Result JsForeign InteropError <Js>,
   require: { module: Str } -> Result JsForeign InteropError <Js>,
@@ -34,87 +42,106 @@ effect Js where {
 pub type GraalJs = {}
 
 impl Js for GraalJs where {
-  import  = { module } -> __native_js_import  { module = module },
-  require = { module } -> __native_js_require { module = module },
-  eval    = { source } -> __native_js_eval    { source = source },
+  ## Evaluate a JS expression. `"js"` is baked here (one of the entry points).
+  eval    = { source } ->
+    perform Runtime in Polyglot.eval_raw { lang = "js", source = source },
+  ## CommonJS `require`, WITHOUT string interpolation: eval the constant `require`
+  ## binding to get the loader callable, then `execute` it with the module name as
+  ## a BOXED argument — no quote-breakout / injection surface.
+  require = { module } -> perform Runtime in do
+    match Polyglot.eval_raw { lang = "js", source = "require" } is
+      Ok  { val = req } ->
+        Polyglot.execute { on = req, args = [Polyglot.box_str { val = module, lang = "js" }] }
+      Err { error } -> Err { error = error },
+  ## ESM dynamic import, injection-free: eval the constant async arrow
+  ## `(m) => import(m)` to get an importer, then `execute` it with the module name
+  ## boxed. Returns whatever the guest yields for `import(m)` — resolution depends
+  ## on the Context draining its microtask queue, the same assumption the prior
+  ## interpolated implementation relied on.
+  import  = { module } -> perform Runtime in do
+    match Polyglot.eval_raw { lang = "js", source = "(async (m) => await import(m))" } is
+      Ok  { val = importer } ->
+        Polyglot.execute { on = importer, args = [Polyglot.box_str { val = module, lang = "js" }] }
+      Err { error } -> Err { error = error },
 }
 
-## The complete JS verb set on a JsForeign. Fallible verbs return
-## `Result JsForeign InteropError` (or a coerced scalar) — chain them directly on
-## the Result via the mirror impl below, no `match` between steps.
+## The complete JS verb set on a JsForeign. Every verb buries its own
+## `perform Runtime`, so chains run with no enclosing perform. Fallible verbs
+## return `Result JsForeign InteropError` (or a coerced scalar) — chain them
+## directly on the Result via the mirror impl below, no `match` between steps.
 impl JsForeign where {
   ## ---- properties: obj.x / obj.x = v / x in obj ----
 
   ## Read a named property — JS `obj.name`.
   property     = { it, name } ->
-    __native_polyglot_read_member  { val = it, name = name },
+    perform Runtime in Polyglot.read_member { on = it, name = name },
   ## Assign a named property — JS `obj.name = val`.
   set_property = { it, name, val } ->
-    __native_polyglot_write_member { val = it, name = name, new_val = val },
+    perform Runtime in Polyglot.write_member { on = it, name = name, val = val },
   ## True iff the property is readable — JS `name in obj`.
   has          = { it, name } ->
-    __native_polyglot_has_member   { val = it, name = name },
+    perform Runtime in Polyglot.has_member { on = it, name = name },
 
   ## ---- call / method / construct ----
 
   ## Call a callable — JS `f(...args)`.
   call   = { it, args } ->
-    __native_polyglot_execute      { val = it, args = args },
+    perform Runtime in Polyglot.execute { on = it, args = args },
   ## Call a method by name — JS `obj.name(...args)`.
   method = { it, name, args } ->
-    __native_polyglot_invoke_member { val = it, name = name, args = args },
+    perform Runtime in Polyglot.invoke_member { on = it, name = name, args = args },
   ## Instantiate a constructor — JS `new Ctor(...args)`.
   new    = { it, args } ->
-    __native_polyglot_instantiate  { val = it, args = args },
+    perform Runtime in Polyglot.instantiate { on = it, args = args },
 
   ## ---- array elements: arr[i] ----
 
   ## Read an indexed element — JS `arr[i]`.
   index     = { it, i } ->
-    __native_polyglot_read_array   { val = it, index = i },
+    perform Runtime in Polyglot.read_array { on = it, index = i },
   ## Assign an indexed element — JS `arr[i] = val`.
   set_index = { it, i, val } ->
-    __native_polyglot_write_array  { val = it, index = i, new_val = val },
+    perform Runtime in Polyglot.write_array { on = it, index = i, val = val },
 
   ## ---- Map / dict entries ----
 
   ## Read a mapping entry by key — JS `map.get(k)`. `key` may be a Foreign or a
   ## bare Mezze value.
   key     = { it, of } ->
-    __native_polyglot_read_hash    { val = it, key = of },
+    perform Runtime in Polyglot.read_hash { on = it, key = of },
   ## Write a mapping entry — JS `map.set(k, v)`.
   set_key = { it, of, val } ->
-    __native_polyglot_write_hash   { val = it, key = of, new_val = val },
+    perform Runtime in Polyglot.write_hash { on = it, key = of, val = val },
   ## Every mapping entry as a seq of two-element `[key, value]` Foreigns — the
   ## shape a codec's `decode_map` walks (JS `Object.entries` / `Map.entries`).
   entries = { it } ->
-    __native_polyglot_hash_entries { val = it },
+    perform Runtime in Polyglot.hash_entries { on = it },
 
   ## ---- length / iteration ----
 
   ## Length — array elements or Map entries (JS `.length` / `.size`).
   len    = { it } ->
-    __native_polyglot_size         { val = it },
+    perform Runtime in Polyglot.size { on = it },
   ## Drain any iterable — an array, generator, Set, or `[Symbol.iterator]` object
   ## — into a Mezze seq of Foreigns in ONE crossing (JS `Array.from(obj)`). The
   ## cursor stays inside the runtime, so no mutable iterator reaches pure code.
   to_seq = { it } ->
-    __native_polyglot_to_seq       { val = it },
+    perform Runtime in Polyglot.to_seq { on = it },
 
   ## ---- value coercions (out) ----
 
   ## Coerce a numeric Foreign to Int.
-  int       = { it } -> __native_polyglot_as_long    { val = it },
+  int       = { it } -> perform Runtime in Polyglot.as_int    { on = it },
   ## Coerce a numeric Foreign to Float.
-  float     = { it } -> __native_polyglot_as_double  { val = it },
+  float     = { it } -> perform Runtime in Polyglot.as_float  { on = it },
   ## Coerce a string Foreign to Str.
-  str       = { it } -> __native_polyglot_as_string  { val = it },
+  str       = { it } -> perform Runtime in Polyglot.as_str    { on = it },
   ## Coerce a boolean Foreign to Bool.
-  bool      = { it } -> __native_polyglot_as_boolean { val = it },
+  bool      = { it } -> perform Runtime in Polyglot.as_bool   { on = it },
   ## True iff this Foreign is JS `null` or `undefined`.
-  is_null   = { it } -> __native_polyglot_is_null    { val = it },
+  is_null   = { it } -> perform Runtime in Polyglot.is_null   { on = it },
   ## The underlying guest type name (`typeof` / constructor name).
-  type_name = { it } -> __native_polyglot_type_name  { val = it },
+  type_name = { it } -> perform Runtime in Polyglot.type_name { on = it },
 }
 
 ## The SAME verbs on `Result JsForeign InteropError` — the return type of every
@@ -188,21 +215,28 @@ impl Result JsForeign InteropError where {
 }
 
 ## Constructors — lift a Mezze primitive into a JsForeign so it can be passed as
-## an argument to `.method{}` / `.call{}` / `.index{}`. For containers and
+## an argument to `.method{}` / `.call{}` / `.index{}`. Each mints a foreign
+## through the `Polyglot` effect with the guest id `"js"` baked in here — a caller
+## writes `from_int { val = 5 }`, never a `lang` string. For containers and
 ## records, prefer the codec (`x.to_js {}`).
-pub let from_int:   { val: Int   } -> JsForeign = { val } -> __native_js_from_int   { val = val }
-pub let from_float: { val: Float } -> JsForeign = { val } -> __native_js_from_float { val = val }
-pub let from_str:   { val: Str   } -> JsForeign = { val } -> __native_js_from_str   { val = val }
-pub let from_bool:  { val: Bool  } -> JsForeign = { val } -> __native_js_from_bool  { val = val }
-pub let null_val:   {}            -> JsForeign = {}     -> __native_js_null_val    {}
+pub let from_int:   { val: Int   } -> JsForeign = { val } ->
+  perform Runtime in Polyglot.box_int   { val = val, lang = "js" }
+pub let from_float: { val: Float } -> JsForeign = { val } ->
+  perform Runtime in Polyglot.box_float { val = val, lang = "js" }
+pub let from_str:   { val: Str   } -> JsForeign = { val } ->
+  perform Runtime in Polyglot.box_str   { val = val, lang = "js" }
+pub let from_bool:  { val: Bool  } -> JsForeign = { val } ->
+  perform Runtime in Polyglot.box_bool  { val = val, lang = "js" }
+pub let null_val:   {}            -> JsForeign = {} ->
+  perform Runtime in Polyglot.box_null  { lang = "js" }
 
 ## Build a JavaScript-visible array from already-wrapped Foreign elements — an
 ## interop VIEW over the elements, not a copy. Backs a codec's `encode_list`.
 pub let js_list: { elems: [JsForeign] } -> JsForeign = { elems } ->
-  __native_js_make_list { elems = elems }
+  perform Runtime in Polyglot.box_list { elems = elems, lang = "js" }
 
 ## Build a JavaScript-visible mapping from parallel key and value sequences.
 ## Companion to `js_list`, backing a codec's `encode_map` / `encode_record`.
 ## Keys keep the order they were given in.
 pub let js_dict: { keys: [JsForeign], vals: [JsForeign] } -> JsForeign = { keys, vals } ->
-  __native_js_make_dict { keys = keys, vals = vals }
+  perform Runtime in Polyglot.box_dict { keys = keys, vals = vals, lang = "js" }

@@ -1,6 +1,6 @@
 [package]
 name    = "mezze-js"
-version = "0.4.0"
+version = "0.5.0"
 
 # Two library entry points, both re-exported to consumers via the
 # package's snake_case module name `mezze_js`:
@@ -44,13 +44,11 @@ runtime_dir   = ".deps/node"
 # along for free (this is why `[maven]` supersedes `[jars]` — no
 # manual sha bookkeeping, real dependency management).
 #
-# Maven Central hosts the GraalJS jars; the mezze-lang maven repo
-# hosts `polyglot-js-natives`. Both are declared below.
+# Only the GraalJS language jars — this package ships NO natives of its own.
+# As of 0.5.0 all interop goes through the first-party `Polyglot` effect in
+# `std::polyglot::core` (handled by `Runtime`, the sole native caller), so the
+# old `dev.mezze:polyglot-js-natives` plugin jar is gone and with it the
+# dependency on the mezze-lang maven repo.
 [maven]
 "org.graalvm.js:js-language"           = "25.0.3"
 "org.graalvm.js:js-scriptengine"       = "25.0.3"
-"dev.mezze:polyglot-js-natives"        = "0.1.0"
-
-[[maven-repo]]
-id  = "mezze-lang"
-url = "https://raw.githubusercontent.com/mezze-lang/mezze-maven/main/"
