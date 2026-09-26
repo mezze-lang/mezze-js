@@ -219,24 +219,24 @@ impl Result JsForeign InteropError where {
 ## through the `Polyglot` effect with the guest id `"js"` baked in here — a caller
 ## writes `from_int { val = 5 }`, never a `lang` string. For containers and
 ## records, prefer the codec (`x.to_js {}`).
-pub let from_int:   { val: Int   } -> JsForeign = { val } ->
+pub let from_int:   { val: Int   } -> JsForeign <*> = { val } ->
   perform Runtime in Polyglot.box_int   { val = val, lang = "js" }
-pub let from_float: { val: Float } -> JsForeign = { val } ->
+pub let from_float: { val: Float } -> JsForeign <*> = { val } ->
   perform Runtime in Polyglot.box_float { val = val, lang = "js" }
-pub let from_str:   { val: Str   } -> JsForeign = { val } ->
+pub let from_str:   { val: Str   } -> JsForeign <*> = { val } ->
   perform Runtime in Polyglot.box_str   { val = val, lang = "js" }
-pub let from_bool:  { val: Bool  } -> JsForeign = { val } ->
+pub let from_bool:  { val: Bool  } -> JsForeign <*> = { val } ->
   perform Runtime in Polyglot.box_bool  { val = val, lang = "js" }
-pub let null_val:   {}            -> JsForeign = {} ->
+pub let null_val:   {}            -> JsForeign <*> = {} ->
   perform Runtime in Polyglot.box_null  { lang = "js" }
 
 ## Build a JavaScript-visible array from already-wrapped Foreign elements — an
 ## interop VIEW over the elements, not a copy. Backs a codec's `encode_list`.
-pub let js_list: { elems: [JsForeign] } -> JsForeign = { elems } ->
+pub let js_list: { elems: [JsForeign] } -> JsForeign <*> = { elems } ->
   perform Runtime in Polyglot.box_list { elems = elems, lang = "js" }
 
 ## Build a JavaScript-visible mapping from parallel key and value sequences.
 ## Companion to `js_list`, backing a codec's `encode_map` / `encode_record`.
 ## Keys keep the order they were given in.
-pub let js_dict: { keys: [JsForeign], vals: [JsForeign] } -> JsForeign = { keys, vals } ->
+pub let js_dict: { keys: [JsForeign], vals: [JsForeign] } -> JsForeign <*> = { keys, vals } ->
   perform Runtime in Polyglot.box_dict { keys = keys, vals = vals, lang = "js" }
