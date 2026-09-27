@@ -38,9 +38,8 @@ effect Js where {
 
 ## Default JS host — routes all ops through the ambient Truffle Env's GraalJS
 ## interpreter. Zero-field: the polyglot Context is managed by the runtime from
-## `Mezze.toml [polyglot.js]`; the handler carries no user configuration.
-pub type GraalJs = {}
-
+## `Mezze.toml [polyglot.js]`; the handler carries no user configuration. The
+## handler type is introduced by the impl itself — no separate `type` is needed.
 impl Js for GraalJs where {
   ## Evaluate a JS expression. `"js"` is baked here (one of the entry points).
   eval    = { source } ->
