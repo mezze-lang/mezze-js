@@ -17,8 +17,8 @@
 ## `Js.eval` round trip.
 use std::codec::core::{
   Format,
-  EncodeScalar, EncodeOption, EncodeList, EncodeMap, EncodeRecord, EncodeVariant,
-  DecodeScalar, DecodeOption, DecodeList, DecodeMap, DecodeRecord, DecodeVariant,
+  EncodeScalar, EncodeOption, EncodeSequence, EncodeMapping, EncodeRecord, EncodeVariant,
+  DecodeScalar, DecodeOption, DecodeSequence, DecodeMapping, DecodeRecord, DecodeVariant,
   Encode, Decode,
   CodecCtx, SharedConfig, DecodeError,
   default_shared,
@@ -178,17 +178,17 @@ impl DecodeOption for JsC having 'in = JsForeign where {
 ## no copy to pay for.
 ##
 ## The cost of not having these was not just an unsupported shape, it was a slow
-## one: with no `EncodeList`, `[1, 2, 3].to_js {}` failed to auto-derive, and
+## one: with no `EncodeSequence`, `[1, 2, 3].to_js {}` failed to auto-derive, and
 ## the only way to hand a guest a sequence was to PRINT IT INTO GUEST SOURCE and
 ## have the guest parse it back — O(n) string building plus an O(n) parse, about
 ## 19 us fixed and 0.085 us per element. Through the view it is O(1).
 
-impl EncodeList for JsC having 'out = JsForeign where {
-  encode_list = { it, elems, ctx } -> js_list { elems = elems },
+impl EncodeSequence for JsC having 'out = JsForeign where {
+  encode_sequence = { it, elems, ctx } -> js_list { elems = elems },
 }
 
-impl EncodeMap for JsC having 'out = JsForeign where {
-  encode_map = { it, entries, ctx } -> js_dict {
+impl EncodeMapping for JsC having 'out = JsForeign where {
+  encode_mapping = { it, entries, ctx } -> js_dict {
     keys = seq::map { xs = entries, f = { x } -> x.key },
     vals = seq::map { xs = entries, f = { x } -> x.value },
   },
@@ -225,7 +225,7 @@ impl EncodeVariant for JsC having 'out = JsForeign where {
 ## through `get_member`, which is why the record and map decoders go through
 ## `key` / `entries` rather than the member vocabulary.
 
-## One `[key, value]` pair Foreign, as the entry shape `decode_map` returns.
+## One `[key, value]` pair Foreign, as the entry shape `decode_mapping` returns.
 let pair_entry_of: { p: JsForeign } -> Option { key: JsForeign, value: JsForeign } =
   { p } -> match p.to_seq {} is
     Ok { val = kv } -> match seq::get { xs = kv, i = 0 } is
@@ -252,8 +252,8 @@ let read_pairs:
 ## The whole array crosses in ONE call rather than one per element: an index walk
 ## costs a native call and a `Result` per element, while `js_list` sends a seq the
 ## other way in O(1).
-impl DecodeList for JsC having 'in = JsForeign where {
-  decode_list = { it, val, ctx } -> match val.to_seq {} is
+impl DecodeSequence for JsC having 'in = JsForeign where {
+  decode_sequence = { it, val, ctx } -> match val.to_seq {} is
     Ok { val = es } -> Ok { val = es }
     Err { error = _ } -> decode_error {
       path = ctx.path,
@@ -263,8 +263,8 @@ impl DecodeList for JsC having 'in = JsForeign where {
     },
 }
 
-impl DecodeMap for JsC having 'in = JsForeign where {
-  decode_map = { it, val, ctx } -> match val.entries {} is
+impl DecodeMapping for JsC having 'in = JsForeign where {
+  decode_mapping = { it, val, ctx } -> match val.entries {} is
     Ok { val = pairs_foreign } -> match pairs_foreign.to_seq {} is
       Ok { val = pairs } -> match read_pairs { pairs = pairs, idx = 0, acc = [] } is
         Some { val = es } -> Ok { val = es }

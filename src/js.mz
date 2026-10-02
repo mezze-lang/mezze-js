@@ -112,7 +112,7 @@ impl JsForeign where {
   set_key = { it, of, val } ->
     perform Runtime in Polyglot.write_hash { on = it, key = of, val = val },
   ## Every mapping entry as a seq of two-element `[key, value]` Foreigns — the
-  ## shape a codec's `decode_map` walks (JS `Object.entries` / `Map.entries`).
+  ## shape a codec's `decode_mapping` walks (JS `Object.entries` / `Map.entries`).
   entries = { it } ->
     perform Runtime in Polyglot.hash_entries { on = it },
 
@@ -230,12 +230,12 @@ pub let null_val:   {}            -> JsForeign <*> = {} ->
   perform Runtime in Polyglot.box_null  { lang = "js" }
 
 ## Build a JavaScript-visible array from already-wrapped Foreign elements — an
-## interop VIEW over the elements, not a copy. Backs a codec's `encode_list`.
+## interop VIEW over the elements, not a copy. Backs a codec's `encode_sequence`.
 pub let js_list: { elems: [JsForeign] } -> JsForeign <*> = { elems } ->
   perform Runtime in Polyglot.box_list { elems = elems, lang = "js" }
 
 ## Build a JavaScript-visible mapping from parallel key and value sequences.
-## Companion to `js_list`, backing a codec's `encode_map` / `encode_record`.
+## Companion to `js_list`, backing a codec's `encode_mapping` / `encode_record`.
 ## Keys keep the order they were given in.
 pub let js_dict: { keys: [JsForeign], vals: [JsForeign] } -> JsForeign <*> = { keys, vals } ->
   perform Runtime in Polyglot.box_dict { keys = keys, vals = vals, lang = "js" }
