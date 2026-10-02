@@ -78,6 +78,12 @@ impl EncodeOption for JsC having 'out = JsForeign where {
 
 ## ---- Tier 2: decode ----------------------------------------------------
 
+## `type_name` is an error-label probe that itself returns `Result Str InteropError`
+## (it performs <Polyglot>); a probe that errors just yields "unknown".
+let tname: { f: JsForeign } -> Str <...> = { f } -> match f.type_name {} is
+  Ok { val = t } -> t
+  Err { error = _ } -> "unknown"
+
 impl DecodeScalar for JsC having 'in = JsForeign where {
   decode_int = { it, val, ctx } -> match val.int{} is
     Ok { val = n } -> Ok { val = n }
@@ -85,7 +91,7 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
       path = ctx.path,
       message = "Expected Foreign coercible to Int",
       expected = "Int",
-      found = Some { val = val.type_name{} },
+      found = Some { val = tname { f = val } },
     },
   decode_float = { it, val, ctx } -> match val.float{} is
     Ok { val = n } -> Ok { val = n }
@@ -93,7 +99,7 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
       path = ctx.path,
       message = "Expected Foreign coercible to Float",
       expected = "Float",
-      found = Some { val = val.type_name{} },
+      found = Some { val = tname { f = val } },
     },
   decode_str = { it, val, ctx } -> match val.str{} is
     Ok { val = s } -> Ok { val = s }
@@ -101,7 +107,7 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
       path = ctx.path,
       message = "Expected Foreign coercible to Str",
       expected = "Str",
-      found = Some { val = val.type_name{} },
+      found = Some { val = tname { f = val } },
     },
   decode_bool = { it, val, ctx } -> match val.bool{} is
     Ok { val = b } -> Ok { val = b }
@@ -109,7 +115,7 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
       path = ctx.path,
       message = "Expected Foreign coercible to Bool",
       expected = "Bool",
-      found = Some { val = val.type_name{} },
+      found = Some { val = tname { f = val } },
     },
   decode_frac = { it, val, ctx } -> match val.float{} is
     Ok { val = f } -> match frac::from_float { f = f } is
@@ -118,19 +124,19 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
         path = ctx.path,
         message = "Float is not a finite rational (NaN or infinity)",
         expected = "Frac",
-        found = Some { val = val.type_name{} },
+        found = Some { val = tname { f = val } },
       }
     Err { error = _ } -> decode_error {
       path = ctx.path,
       message = "Expected Foreign coercible to Frac",
       expected = "Frac",
-      found = Some { val = val.type_name{} },
+      found = Some { val = tname { f = val } },
     },
   decode_bytes = { it, val, ctx } -> decode_error {
     path = ctx.path,
     message = "Bytes not supported by JsC decoder",
     expected = "Bytes",
-    found = Some { val = val.type_name{} },
+    found = Some { val = tname { f = val } },
   },
   decode_char = { it, val, ctx } -> match val.str{} is
     Ok { val = s } -> match char::from_str { s = s } is
@@ -145,7 +151,7 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
       path = ctx.path,
       message = "Expected Foreign coercible to Char",
       expected = "Char",
-      found = Some { val = val.type_name{} },
+      found = Some { val = tname { f = val } },
     },
   decode_nat = { it, val, ctx } -> match val.int{} is
     Ok { val = n } -> match nat::from_int { n = n } is
@@ -160,14 +166,14 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
       path = ctx.path,
       message = "Expected Foreign coercible to Nat",
       expected = "Nat",
-      found = Some { val = val.type_name{} },
+      found = Some { val = tname { f = val } },
     },
 }
 
 impl DecodeOption for JsC having 'in = JsForeign where {
-  decode_option = { it, val, ctx } ->
-    if val.is_null{} then Ok { val = None }
-    else Ok { val = Some { val = val } },
+  decode_option = { it, val, ctx } -> match val.is_null{} is
+    Ok { val = b } -> if b then Ok { val = None } else Ok { val = Some { val = val } }
+    Err { error = _ } -> Ok { val = Some { val = val } },
 }
 
 
@@ -259,67 +265,66 @@ impl DecodeSequence for JsC having 'in = JsForeign where {
       path = ctx.path,
       message = "Expected an array-shaped Foreign",
       expected = "List",
-      found = Some { val = val.type_name{} },
+      found = Some { val = tname { f = val } },
     },
 }
 
 impl DecodeMapping for JsC having 'in = JsForeign where {
-  decode_mapping = { it, val, ctx } -> match val.entries {} is
-    Ok { val = pairs_foreign } -> match pairs_foreign.to_seq {} is
-      Ok { val = pairs } -> match read_pairs { pairs = pairs, idx = 0, acc = [] } is
-        Some { val = es } -> Ok { val = es }
-        None -> decode_error {
-          path = ctx.path,
-          message = "Expected every map entry to be a two-element key/value pair",
-          expected = "Map",
-          found = Some { val = val.type_name{} },
-        }
-      Err { error = _ } -> decode_error {
+  decode_mapping = { it, val, ctx } -> match val.entries {}.to_seq {} is
+    Ok { val = pairs } -> match read_pairs { pairs = pairs, idx = 0, acc = [] } is
+      Some { val = es } -> Ok { val = es }
+      None -> decode_error {
         path = ctx.path,
-        message = "Foreign map entries are not array-shaped",
+        message = "Expected every map entry to be a two-element key/value pair",
         expected = "Map",
-        found = Some { val = val.type_name{} },
+        found = Some { val = tname { f = val } },
       }
     Err { error = _ } -> decode_error {
       path = ctx.path,
       message = "Expected a hash-shaped Foreign",
       expected = "Map",
-      found = Some { val = val.type_name{} },
+      found = Some { val = tname { f = val } },
     },
 }
 
 impl DecodeRecord for JsC having 'in = JsForeign where {
-  decode_record_field = { it, val, key, ctx } -> match val.key { of = key } is
-    Ok { val = v } -> Ok { val = v }
-    Err { error = _ } -> decode_error {
-      path = ctx.path,
-      message = "Missing field: $(key)",
-      expected = key,
-      found = None,
-    },
+  decode_record_field = { it, val, key, ctx } -> do
+    let f = val.key { of = key }
+    match f.check {} is
+      Ok  { val = _ } -> Ok { val = f }
+      Err { error = _ } -> decode_error {
+        path = ctx.path,
+        message = "Missing field: $(key)",
+        expected = key,
+        found = None,
+      },
 }
 
 ## Reads back the `{ tag }` / `{ tag, value }` shape `encode_variant` writes.
 ## A missing `value` is a payload-free constructor, not an error — that is the
 ## only reading available, since the two are encoded as exactly that difference.
 impl DecodeVariant for JsC having 'in = JsForeign where {
-  decode_variant = { it, val, ctx } -> match val.key { of = "tag" } is
-    Ok { val = t } -> match t.str {} is
-      Ok { val = tag } -> match val.key { of = "value" } is
-        Ok { val = p } -> Ok { val = { tag = tag, payload = Some { val = p } } }
-        Err { error = _ } -> Ok { val = { tag = tag, payload = None } }
+  decode_variant = { it, val, ctx } -> do
+    let t = val.key { of = "tag" }
+    match t.check {} is
+      Ok { val = _ } -> match t.str {} is
+        Ok { val = tag } -> do
+          let p = val.key { of = "value" }
+          match p.check {} is
+            Ok  { val = _ } -> Ok { val = { tag = tag, payload = Some { val = p } } }
+            Err { error = _ } -> Ok { val = { tag = tag, payload = None } }
+        Err { error = _ } -> decode_error {
+          path = ctx.path,
+          message = "Variant tag is not a string",
+          expected = "Str",
+          found = Some { val = tname { f = t } },
+        }
       Err { error = _ } -> decode_error {
         path = ctx.path,
-        message = "Variant tag is not a string",
-        expected = "Str",
-        found = Some { val = t.type_name{} },
-      }
-    Err { error = _ } -> decode_error {
-      path = ctx.path,
-      message = "Expected a Foreign with a 'tag' entry",
-      expected = "Variant",
-      found = Some { val = val.type_name{} },
-    },
+        message = "Expected a Foreign with a 'tag' entry",
+        expected = "Variant",
+        found = Some { val = tname { f = val } },
+      },
 }
 
 ## ---- Tier 4: sugar abilities + blankets --------------------------------

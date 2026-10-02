@@ -141,6 +141,10 @@ impl JsForeign where {
   is_null   = { it } -> perform Runtime in Polyglot.is_null   { on = it },
   ## The underlying guest type name (`typeof` / constructor name).
   type_name = { it } -> perform Runtime in Polyglot.type_name { on = it },
+  ## Presence/liveness probe: `Ok {}` if the foreign is live, `Err` if it carries
+  ## an error (e.g. an absent hash key read back as an errored foreign). Backs a
+  ## codec's missing-field / absent-payload check.
+  check     = { it } -> perform Runtime in Polyglot.check { on = it },
 }
 
 ## The SAME verbs on `Result JsForeign InteropError` — the return type of every
