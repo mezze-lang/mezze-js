@@ -72,6 +72,55 @@ impl Js for GraalJs where {
     },
 }
 
+## Sandboxed JS host — the SAME `Js` effect as `GraalJs`, but every op runs in an
+## isolated INNER context with an explicit access policy. `perform GraalJsWith { … }
+## in do …` IS the isolation boundary: `initialize_scope` opens the inner context on
+## entry (binding its handle to `scope`) and `finalize_scope` tears it down on exit,
+## so globals don't leak between scopes and access is restricted BELOW the permissive
+## parent. A `Js.eval` result here is a live foreign over that inner context —
+## chainable with the usual `.property{}` / `.int{}` verbs while the scope is open,
+## and degrading to an error once it closes. User code still writes only `Js.*`;
+## `Polyglot`/`Runtime`/`"js"` stay buried exactly as in `GraalJs`.
+##
+## The ONE field is `config` — the full `Context.Builder` policy as a structural
+## record (NOT a nominal type; mezze is structural). It is required (mezze has no
+## field defaults), so spread the provider default `js_defaults` and override only
+## the knobs you want:
+##   perform GraalJsWith { config = { ...js_defaults, allow_io = False } } in do …
+impl Js for GraalJsWith { config: { allow_io: Bool, allow_native: Bool, allow_create_thread: Bool, allow_create_process: Bool, allow_host_class_loading: Bool, allow_host_lookup: Bool, allow_polyglot_access: Bool } } where {
+  ## Open the isolated inner context from `config`; its handle binds to `scope`.
+  initialize_scope = {} -> perform Runtime in Polyglot.open_context { lang = "js", config = config },
+  ## Tear the inner context down at scope exit; a held foreign errors after this.
+  finalize_scope = {} -> do
+    let _ = perform Runtime in Polyglot.close_context { ctx = scope }
+    {},
+  ## Evaluate IN the inner context — `eval_in` yields a live foreign over the result,
+  ## tagged with the context so the object API keeps working; `lift` to a `Result`.
+  eval    = { source } -> perform Runtime in
+    lift { on = Polyglot.eval_in { ctx = scope, source = source } },
+  require = { module } -> perform Runtime in
+    lift {
+      on = Polyglot.execute {
+        on = Polyglot.eval_in { ctx = scope, source = "require" },
+        args = [Polyglot.box_str { val = module, lang = "js" }],
+      },
+    },
+  import  = { module } -> perform Runtime in
+    lift {
+      on = Polyglot.execute {
+        on = Polyglot.eval_in { ctx = scope, source = "(async (m) => await import(m))" },
+        args = [Polyglot.box_str { val = module, lang = "js" }],
+      },
+    },
+}
+
+## Default `Context.Builder` policy for `GraalJsWith` — PERMISSIVE (everything
+## allowed, matching the ambient `GraalJs`). Sandboxing is OPT-IN: spread this and
+## deny the knobs you want, e.g. `GraalJsWith { config = { ...js_defaults, allow_io = False } }`.
+## It is a plain structural record VALUE — override any subset, add nothing.
+pub let js_defaults: { allow_io: Bool, allow_native: Bool, allow_create_thread: Bool, allow_create_process: Bool, allow_host_class_loading: Bool, allow_host_lookup: Bool, allow_polyglot_access: Bool } =
+  { allow_io = True, allow_native = True, allow_create_thread = True, allow_create_process = True, allow_host_class_loading = True, allow_host_lookup = True, allow_polyglot_access = True }
+
 ## The complete JS verb set on a JsForeign. Every verb buries its own
 ## `perform Runtime`, so chains run with no enclosing perform. Fallible verbs
 ## return `Result JsForeign InteropError` (or a coerced scalar) — chain them
