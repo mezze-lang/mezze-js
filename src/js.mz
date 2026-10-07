@@ -197,6 +197,9 @@ impl JsForeign where {
   ## prefer over a per-element `index{}` + `int{}` loop (one crossing per element).
   to_ints   = { it } -> perform Runtime in Polyglot.to_int_seq   { on = it },
   to_floats = { it } -> perform Runtime in Polyglot.to_float_seq { on = it },
+  ## Bulk-drain a STRING / BOOLEAN array → Mezze `[Str]` / `[Bool]` in ONE crossing.
+  to_strs   = { it } -> perform Runtime in Polyglot.to_str_seq   { on = it },
+  to_bools  = { it } -> perform Runtime in Polyglot.to_bool_seq  { on = it },
 
   ## ---- value coercions (out) ----
 
@@ -279,6 +282,12 @@ impl Result JsForeign InteropError where {
   to_floats = { it } -> match it is
     Ok  { val = f } -> f.to_floats {}
     Err { error }  -> Err { error = error },
+  to_strs = { it } -> match it is
+    Ok  { val = f } -> f.to_strs {}
+    Err { error }  -> Err { error = error },
+  to_bools = { it } -> match it is
+    Ok  { val = f } -> f.to_bools {}
+    Err { error }  -> Err { error = error },
   int = { it } -> match it is
     Ok  { val = f } -> f.int {}
     Err { error }  -> Err { error = error },
@@ -326,6 +335,10 @@ pub let js_ints:   { vals: [Int] }   -> JsForeign <*> = { vals } ->
   perform Runtime in Polyglot.box_int_seq   { vals = vals, lang = "js" }
 pub let js_floats: { vals: [Float] } -> JsForeign <*> = { vals } ->
   perform Runtime in Polyglot.box_float_seq { vals = vals, lang = "js" }
+pub let js_strs:   { vals: [Str] }   -> JsForeign <*> = { vals } ->
+  perform Runtime in Polyglot.box_str_seq   { vals = vals, lang = "js" }
+pub let js_bools:  { vals: [Bool] }  -> JsForeign <*> = { vals } ->
+  perform Runtime in Polyglot.box_bool_seq  { vals = vals, lang = "js" }
 
 ## Build a JavaScript-visible mapping from parallel key and value sequences.
 ## Companion to `js_list`, backing a codec's `encode_mapping` / `encode_record`.
