@@ -121,12 +121,16 @@ impl Js for GraalJsWith { config: { allow_io: Bool, allow_native: Bool, allow_cr
 ##
 ## JS-SPECIFIC: `allow_native`, `allow_create_thread`, `allow_create_process`,
 ## `allow_host_class_loading`, `allow_host_lookup` all restrict cleanly — denying
-## them still runs js. But `allow_polyglot_access` must stay True (evaluating INTO
-## the inner context is itself a polyglot operation — true for every language) AND
-## GraalJS needs `allow_io = True` to even initialize its engine, so denying either
-## of those blocks js entirely, not just the offending capability. To deny a js
-## script FILE access while still running js you need a Truffle `IOAccess` / virtual
-## filesystem rather than this coarse boolean — not yet exposed here.
+## them still runs js. Two knobs must stay True: `allow_polyglot_access` (evaluating
+## INTO the inner context is itself a polyglot op — true for every language) and
+## `allow_io` (GraalJS needs it to initialize its engine). Keeping `allow_io` on is
+## SAFE for a sandbox, not a hole: bare ECMAScript has NO filesystem API — `require`
+## resolves no `fs` module, so a script cannot read a file. The only way a js script
+## reaches the host (or, through it, the disk) is `Java`/host interop, which is gated
+## by `allow_host_lookup` + `allow_host_class_loading` — set those False and `Java`
+## is `undefined`. (File IO becomes reachable only if you OPT IN to Node via the
+## manifest's `node_modules`; then you are deliberately granting it.) So a restricted
+## js sandbox needs no virtual-filesystem machinery — the capability booleans cover it.
 pub let js_defaults: { allow_io: Bool, allow_native: Bool, allow_create_thread: Bool, allow_create_process: Bool, allow_host_class_loading: Bool, allow_host_lookup: Bool, allow_polyglot_access: Bool } =
   { allow_io = True, allow_native = True, allow_create_thread = True, allow_create_process = True, allow_host_class_loading = True, allow_host_lookup = True, allow_polyglot_access = True }
 
