@@ -1,0 +1,26 @@
+[package]
+name = "mezze_js_conformance"
+version = "0.0.0"
+
+# Conformance harness for the mezze-js provider.
+#
+#   mez check                 # type-level conformance (runtime-free): every
+#                             # verb + the Result mirror must compile. Backed
+#                             # by the toolchain's #22 foreign-kind gate, this
+#                             # alone proves the surface is complete and the
+#                             # producer->Result laundering is sound.
+#   mez dev --no-watch        # behavioural conformance: scalar/bulk/object
+#                             # round-trips + a GraalJsWith sandbox boot, with
+#                             # a non-zero exit on any failed check.
+[[app]]
+name = "conformance"
+path = "src/app.mz"
+entry = "main"
+
+# Depend on the provider AS IT IS in this working tree (not a pinned release),
+# so the harness checks the source you are about to publish.
+[path-dependencies]
+mezze-js = ".."
+
+# Opt in to GraalJS so `mez dev` can actually run the behavioural checks.
+[polyglot.js]

@@ -1,0 +1,186 @@
+# Conformance harness for the mezze-js provider.
+#
+# Two layers, one program:
+#
+#   1. TYPE-LEVEL (mez check, no guest runtime). `verb_coverage` references
+#      every JsForeign verb and both constructor families in well-typed
+#      positions. If the provider drops or renames a verb, changes a verb's
+#      shape, or breaks the `impl Result JsForeign InteropError` mirror (a
+#      producer verb that forgets `lift` can no longer launder a bare foreign
+#      into a Result — the toolchain's #22 gate rejects it), this stops
+#      compiling. That makes `mez check` alone an enforceable conformance gate.
+#
+#   2. BEHAVIOURAL (mez dev --no-watch, needs GraalJS). `main` drives real JS
+#      and checks the answers: scalar coercions, the bulk scalar-seq fast
+#      paths, object/array/callable access, the error-carrying producer model,
+#      and that a `GraalJsWith` sandbox boots. Any failed check increments a
+#      counter and the process exits non-zero.
+#
+# This is the reference instantiation of the two-layer polyglot contract from
+# `std::polyglot::core`; the python and wasm providers carry the same harness.
+use std::effects::log::{ println, Console, Log }
+use std::effects::process::{ exit, SystemProcess }
+use std::polyglot::core::{ InteropError }
+use mezze_js::js::{
+  Js, GraalJs, GraalJsWith, JsForeign, js_defaults,
+  from_int, from_float, from_str, from_bool, null_val,
+  js_list, js_ints, js_floats, js_strs, js_bools, js_dict
+}
+use std::int
+
+## ── Layer 1: type-level verb coverage ───────────────────────────────────────
+## Reference every JsForeign verb once. Never meaningfully executed; its job is
+## to force the compiler to confirm the whole surface exists and type-checks
+## (including the Result mirror, since each verb is also called on a Result-
+## typed receiver in `main`). A missing/renamed verb fails `mez check` here.
+let verb_coverage: { x: JsForeign } -> {}
+  = { x } -> do
+    # producer verbs — bare JsForeign -> JsForeign (chainable)
+    let _ = x.property { name = "p" }
+    let _ = x.set_property { name = "p", val = x }
+    let _ = x.call { args = [x] }
+    let _ = x.method { name = "m", args = [x] }
+    let _ = x.new { args = [x] }
+    let _ = x.index { i = 0 }
+    let _ = x.set_index { i = 0, val = x }
+    let _ = x.key { of = x }
+    let _ = x.set_key { of = x, val = x }
+    let _ = x.entries {}
+    # crossing verbs — JsForeign -> Result ... InteropError
+    let _ = x.has { name = "p" }
+    let _ = x.len {}
+    let _ = x.to_seq {}
+    let _ = x.to_ints {}
+    let _ = x.to_floats {}
+    let _ = x.to_strs {}
+    let _ = x.to_bools {}
+    let _ = x.int {}
+    let _ = x.float {}
+    let _ = x.str {}
+    let _ = x.bool {}
+    let _ = x.is_null {}
+    let _ = x.type_name {}
+    let _ = x.check {}
+    {}
+
+## Constructor coverage — every lift-a-primitive and bulk-box entry point.
+let ctor_coverage: {} -> [JsForeign] <*>
+  = {} -> [
+    from_int { val = 1 }, from_float { val = 1.0 }, from_str { val = "a" },
+    from_bool { val = True }, null_val {},
+    js_list { elems = [from_int { val = 1 }] },
+    js_ints { vals = [1] }, js_floats { vals = [1.0] },
+    js_strs { vals = ["a"] }, js_bools { vals = [True] },
+    js_dict { keys = [from_str { val = "k" }], vals = [from_int { val = 1 }] },
+  ]
+
+## ── Layer 2: behavioural checks ─────────────────────────────────────────────
+## Each returns 0 on pass, 1 on fail, printing the outcome. `main` sums them.
+let pass: { label: Str } -> Int <Log>
+  = { label } -> do
+    let _ = println { msg = "  ok    $(label)" }
+    0
+
+let fail: { label: Str, detail: Str } -> Int <Log>
+  = { label, detail } -> do
+    let _ = println { msg = "  FAIL  $(label): $(detail)" }
+    1
+
+let want_int: { label: Str, got: Result Int InteropError, want: Int } -> Int <Log>
+  = { label, got, want } -> match got is
+    Ok { val = n } ->
+      if n == want then pass { label = label }
+      else fail { label = label, detail = "got $(int::to_str { n = n }), want $(int::to_str { n = want })" }
+    Err { error = _ } -> fail { label = label, detail = "guest error" }
+
+let want_str: { label: Str, got: Result Str InteropError, want: Str } -> Int <Log>
+  = { label, got, want } -> match got is
+    Ok { val = s } ->
+      if s == want then pass { label = label }
+      else fail { label = label, detail = "got '$(s)', want '$(want)'" }
+    Err { error = _ } -> fail { label = label, detail = "guest error" }
+
+let want_true: { label: Str, got: Result Bool InteropError } -> Int <Log>
+  = { label, got } -> match got is
+    Ok { val = b } ->
+      if b then pass { label = label } else fail { label = label, detail = "got False, want True" }
+    Err { error = _ } -> fail { label = label, detail = "guest error" }
+
+let want_ints: { label: Str, got: Result [Int] InteropError, want: [Int] } -> Int <Log>
+  = { label, got, want } -> match got is
+    Ok { val = xs } ->
+      if xs == want then pass { label = label }
+      else fail { label = label, detail = "sequence mismatch" }
+    Err { error = _ } -> fail { label = label, detail = "guest error" }
+
+## An Err-carrying producer must pattern-match as Err, not crash — the core of
+## the lift/mirror contract.
+let want_err: { label: Str, got: Result Int InteropError } -> Int <Log>
+  = { label, got } -> match got is
+    Ok { val = _ } -> fail { label = label, detail = "expected Err, got Ok" }
+    Err { error = _ } -> pass { label = label }
+
+## The scalar + bulk + object + error-model checks, parameterised over the
+## active `Js` handler so the SAME battery runs under `GraalJs` and the
+## sandboxed `GraalJsWith`.
+let behavioural: {} -> Int <Js, Log, *>
+  = {} -> do
+    let a = want_int { label = "eval 6 * 7", got = Js.eval { source = "6 * 7" }.int {}, want = 42 }
+    let b = want_int {
+      label = "property read",
+      got = Js.eval { source = "({ x: 35 })" }.property { name = "x" }.int {},
+      want = 35,
+    }
+    let c = want_str { label = "string coercion", got = Js.eval { source = "'he' + 'llo'" }.str {}, want = "hello" }
+    let d = want_true { label = "null is_null", got = Js.eval { source = "null" }.is_null {} }
+    let e = want_int { label = "array index", got = Js.eval { source = "[10, 20, 30]" }.index { i = 1 }.int {}, want = 20 }
+    let f = want_int { label = "array len", got = Js.eval { source = "[10, 20, 30]" }.len {}, want = 3 }
+    let g = want_int {
+      label = "callable call",
+      got = Js.eval { source = "Math.max" }.call { args = [from_int { val = 3 }, from_int { val = 9 }] }.int {},
+      want = 9,
+    }
+    let h = want_int {
+      label = "method invoke",
+      got = Js.eval { source = "({ add: function (x) { return x + 1 } })" }
+        .method { name = "add", args = [from_int { val = 41 }] }.int {},
+      want = 42,
+    }
+    # bulk scalar-seq fast paths, both directions: box a Mezze seq into JS, drain it back.
+    let i = want_ints { label = "bulk js_ints -> to_ints", got = js_ints { vals = [1, 2, 3] }.to_ints {}, want = [1, 2, 3] }
+    let j = want_ints { label = "bulk eval array -> to_ints", got = Js.eval { source = "[4, 5, 6]" }.to_ints {}, want = [4, 5, 6] }
+    # error-carrying producer: reading a member of a number yields an errored
+    # foreign; coercing it must surface as Err, never crash the match.
+    let k = want_err { label = "errored producer -> Err", got = Js.eval { source = "(42).nope.deeper" }.int {} }
+    let s1 = int::add { l = a, r = b }
+    let s2 = int::add { l = s1, r = c }
+    let s3 = int::add { l = s2, r = d }
+    let s4 = int::add { l = s3, r = e }
+    let s5 = int::add { l = s4, r = f }
+    let s6 = int::add { l = s5, r = g }
+    let s7 = int::add { l = s6, r = h }
+    let s8 = int::add { l = s7, r = i }
+    let s9 = int::add { l = s8, r = j }
+    int::add { l = s9, r = k }
+
+let main = {} -> perform Console in perform SystemProcess in do
+  let _ = println { msg = "== mezze-js conformance ==" }
+  let _ = println { msg = "" }
+
+  let _ = println { msg = "GraalJs (ambient):" }
+  let ambient =
+    perform GraalJs in do
+      behavioural {}
+
+  let _ = println { msg = "" }
+  let _ = println { msg = "GraalJsWith (sandbox boot, permissive defaults):" }
+  let sandboxed =
+    perform GraalJsWith { config = js_defaults } in do
+      behavioural {}
+
+  let total = int::add { l = ambient, r = sandboxed }
+  let _ = println { msg = "" }
+  if total == 0 then println { msg = "== all conformance checks passed ==" }
+  else do
+    let _ = println { msg = "== CONFORMANCE FAILED: $(int::to_str { n = total }) check(s) ==" }
+    exit { code = 1 }
