@@ -36,11 +36,6 @@ language      = "js"
 install       = "npm install --prefix {dest} {packages}"
 runtime_env   = "NODE_PATH"
 runtime_dir   = ".deps/node"
-# Minimum mez release this provider's generated code needs (lift, the bulk
-# scalar-seq verbs, the ScalarSequence codec hooks — all first shipped in 0.1.0).
-# `mez sync` fails loudly if the toolchain is an older RELEASE; a dev `nightly-*`
-# build skips the check. See mezze's SyncCommand toolchain handshake.
-min_toolchain = "0.1.0"
 
 # ─── Maven coordinates ─────────────────────────────────────────────
 #
