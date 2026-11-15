@@ -19,7 +19,7 @@
 # (Object.entries), `len` (.length/.size), `to_seq` (Array.from — drains any
 # iterable), `call`/`method`/`new`, and `int`/`float`/`str`/`bool`/`is_null`/
 # `type_name`. Mirrors std::polyglot::jvm's shape with JS vocabulary.
-use std::polyglot::core::{ InteropError, Polyglot, Runtime, Foreign, lift }
+use std::polyglot::core::{ InteropError, Polyglot, Runtime, Foreign }
 
 ## Opaque handle to a JS object. Wraps the public `Foreign` handle (never the
 ## internal native primitive); the newtype gives Mezze-level type safety against
@@ -31,9 +31,9 @@ pub newtype JsForeign = Foreign
 ## `node_modules` in the manifest), and `import` for ESM dynamic imports. The user
 ## performs only `GraalJs`; its handler buries `perform Runtime` internally.
 effect Js where {
-  import:  { module: Str } -> Result JsForeign InteropError <Js>,
-  require: { module: Str } -> Result JsForeign InteropError <Js>,
-  eval:    { source: Str } -> Result JsForeign InteropError <Js>
+  import:  { module: Str } -> JsForeign <Js>,
+  require: { module: Str } -> JsForeign <Js>,
+  eval:    { source: Str } -> JsForeign <Js>
 }
 
 ## Default JS host — routes all ops through the ambient Truffle Env's GraalJS
@@ -42,34 +42,32 @@ effect Js where {
 ## handler type is introduced by the impl itself — no separate `type` is needed.
 impl Js for GraalJs where {
   ## Evaluate a JS expression. `"js"` is baked here (one of the entry points).
-  ## `eval_raw` yields a bare error-carrying foreign; `lift` turns it into the
-  ## `Result` this entry point promises (the one crossing, once, at entry).
+  ## `eval_raw` yields a bare ERROR-CARRYING foreign, and that is what this entry
+  ## point hands back — the same shape `Jvm.class` has in the reference provider.
+  ## The crossing happens once, at a VALUE-OUT verb (`.int{}`, `.str{}`), not here:
+  ## that is what lets `Js.eval { … }.property { name = "x" }.int {}` read flat.
   eval    = { source } -> perform Runtime in
-    lift { on = Polyglot.eval_raw { lang = "js", source = source } },
+    Polyglot.eval_raw { lang = "js", source = source },
   ## CommonJS `require`, WITHOUT string interpolation: eval the constant `require`
   ## binding to get the loader callable, then `execute` it with the module name as
   ## a BOXED argument — no quote-breakout / injection surface. `execute` yields a
-  ## bare foreign too, so both producer steps chain on the foreign and `lift`
-  ## materializes the single `Result` at the end.
+  ## bare foreign too, so both producer steps chain on the foreign and the error
+  ## stays buried in it until a value-out verb asks.
   require = { module } -> perform Runtime in
-    lift {
-      on = Polyglot.execute {
+    Polyglot.execute {
         on = Polyglot.eval_raw { lang = "js", source = "require" },
         args = [Polyglot.box_str { val = module, lang = "js" }],
       },
-    },
   ## ESM dynamic import, injection-free: eval the constant async arrow
   ## `(m) => import(m)` to get an importer, then `execute` it with the module name
   ## boxed. Returns whatever the guest yields for `import(m)` — resolution depends
   ## on the Context draining its microtask queue, the same assumption the prior
   ## interpolated implementation relied on.
   import  = { module } -> perform Runtime in
-    lift {
-      on = Polyglot.execute {
+    Polyglot.execute {
         on = Polyglot.eval_raw { lang = "js", source = "(async (m) => await import(m))" },
         args = [Polyglot.box_str { val = module, lang = "js" }],
       },
-    },
 }
 
 ## Sandboxed JS host — the SAME `Js` effect as `GraalJs`, but every op runs in an
@@ -95,23 +93,19 @@ impl Js for GraalJsWith { config: { allow_io: Bool, allow_native: Bool, allow_cr
     let _ = perform Runtime in Polyglot.close_context { ctx = scope }
     {},
   ## Evaluate IN the inner context — `eval_in` yields a live foreign over the result,
-  ## tagged with the context so the object API keeps working; `lift` to a `Result`.
+  ## tagged with the context so the object API keeps working.
   eval    = { source } -> perform Runtime in
-    lift { on = Polyglot.eval_in { ctx = scope, source = source } },
+    Polyglot.eval_in { ctx = scope, source = source },
   require = { module } -> perform Runtime in
-    lift {
-      on = Polyglot.execute {
+    Polyglot.execute {
         on = Polyglot.eval_in { ctx = scope, source = "require" },
         args = [Polyglot.box_str { val = module, lang = "js" }],
       },
-    },
   import  = { module } -> perform Runtime in
-    lift {
-      on = Polyglot.execute {
+    Polyglot.execute {
         on = Polyglot.eval_in { ctx = scope, source = "(async (m) => await import(m))" },
         args = [Polyglot.box_str { val = module, lang = "js" }],
       },
-    },
 }
 
 ## Default `Context.Builder` policy for `GraalJsWith` — PERMISSIVE (everything
@@ -135,9 +129,14 @@ pub let js_defaults: { allow_io: Bool, allow_native: Bool, allow_create_thread: 
   { allow_io = True, allow_native = True, allow_create_thread = True, allow_create_process = True, allow_host_class_loading = True, allow_host_lookup = True, allow_polyglot_access = True }
 
 ## The complete JS verb set on a JsForeign. Every verb buries its own
-## `perform Runtime`, so chains run with no enclosing perform. Fallible verbs
-## return `Result JsForeign InteropError` (or a coerced scalar) — chain them
-## directly on the Result via the mirror impl below, no `match` between steps.
+## `perform Runtime`, so chains run with no enclosing perform.
+##
+## PRODUCER verbs yield a bare ERROR-CARRYING JsForeign, so they chain directly:
+## `Js.eval { … }.property { name = "x" }.int {}`. CROSSING verbs are where the
+## error surfaces, as `Result X InteropError`. There is NO `impl Result JsForeign`
+## mirror: an inherent method belongs to the module owning the receiver, and
+## `Result` is owned by `std::result` (V0406). The reference provider
+## (`std::polyglot::jvm`) has always had this shape.
 impl JsForeign where {
   ## ---- properties: obj.x / obj.x = v / x in obj ----
 
@@ -223,93 +222,6 @@ impl JsForeign where {
   ## an error (e.g. an absent hash key read back as an errored foreign). Backs a
   ## codec's missing-field / absent-payload check.
   check     = { it } -> perform Runtime in Polyglot.check { on = it },
-}
-
-## The SAME verbs on `Result JsForeign InteropError` — the return type of every
-## fallible op above — so a pipeline reads as a flat chain
-##
-##     chart.property { name = "plot" }
-##       .call { args = [data] }
-##       .str {}
-##
-## with no `match` between steps. On `Ok` it delegates to the underlying
-## `JsForeign`; on `Err` it propagates the error. The generic `impl Result 'a 'e`
-## (map / get_or / flat_map / …) still applies on top.
-impl Result JsForeign InteropError where {
-  # ---- producer verbs: the bare `JsForeign` form yields an error-carrying
-  # foreign, so on `Ok` we `lift` that foreign back into a `Result` (the chain
-  # stays a `Result` for the next step); on `Err` the earlier error propagates. ----
-  property = { it, name } -> match it is
-    Ok  { val = f } -> perform Runtime in lift { on = f.property { name = name } }
-    Err { error }   -> Err { error = error },
-  set_property = { it, name, val } -> match it is
-    Ok  { val = f } -> perform Runtime in lift { on = f.set_property { name = name, val = val } }
-    Err { error }   -> Err { error = error },
-  call = { it, args } -> match it is
-    Ok  { val = f } -> perform Runtime in lift { on = f.call { args = args } }
-    Err { error }   -> Err { error = error },
-  method = { it, name, args } -> match it is
-    Ok  { val = f } -> perform Runtime in lift { on = f.method { name = name, args = args } }
-    Err { error }   -> Err { error = error },
-  new = { it, args } -> match it is
-    Ok  { val = f } -> perform Runtime in lift { on = f.new { args = args } }
-    Err { error }   -> Err { error = error },
-  index = { it, i } -> match it is
-    Ok  { val = f } -> perform Runtime in lift { on = f.index { i = i } }
-    Err { error }   -> Err { error = error },
-  set_index = { it, i, val } -> match it is
-    Ok  { val = f } -> perform Runtime in lift { on = f.set_index { i = i, val = val } }
-    Err { error }   -> Err { error = error },
-  key = { it, of } -> match it is
-    Ok  { val = f } -> perform Runtime in lift { on = f.key { of = of } }
-    Err { error }   -> Err { error = error },
-  set_key = { it, of, val } -> match it is
-    Ok  { val = f } -> perform Runtime in lift { on = f.set_key { of = of, val = val } }
-    Err { error }   -> Err { error = error },
-  entries = { it } -> match it is
-    Ok  { val = f } -> perform Runtime in lift { on = f.entries {} }
-    Err { error }  -> Err { error = error },
-  # ---- crossing verbs: the bare form ALREADY yields a `Result X InteropError`,
-  # so on `Ok` we forward it verbatim (no extra `Ok {}` wrap); `Err` propagates. ----
-  has = { it, name } -> match it is
-    Ok  { val = f } -> f.has { name = name }
-    Err { error }   -> Err { error = error },
-  len = { it } -> match it is
-    Ok  { val = f } -> f.len {}
-    Err { error }  -> Err { error = error },
-  to_seq = { it } -> match it is
-    Ok  { val = f } -> f.to_seq {}
-    Err { error }  -> Err { error = error },
-  to_ints = { it } -> match it is
-    Ok  { val = f } -> f.to_ints {}
-    Err { error }  -> Err { error = error },
-  to_floats = { it } -> match it is
-    Ok  { val = f } -> f.to_floats {}
-    Err { error }  -> Err { error = error },
-  to_strs = { it } -> match it is
-    Ok  { val = f } -> f.to_strs {}
-    Err { error }  -> Err { error = error },
-  to_bools = { it } -> match it is
-    Ok  { val = f } -> f.to_bools {}
-    Err { error }  -> Err { error = error },
-  int = { it } -> match it is
-    Ok  { val = f } -> f.int {}
-    Err { error }  -> Err { error = error },
-  float = { it } -> match it is
-    Ok  { val = f } -> f.float {}
-    Err { error }  -> Err { error = error },
-  str = { it } -> match it is
-    Ok  { val = f } -> f.str {}
-    Err { error }  -> Err { error = error },
-  bool = { it } -> match it is
-    Ok  { val = f } -> f.bool {}
-    Err { error }  -> Err { error = error },
-  is_null = { it } -> match it is
-    Ok  { val = f } -> f.is_null {}
-    Err { error }  -> Err { error = error },
-  type_name = { it } -> match it is
-    Ok  { val = f } -> f.type_name {}
-    Err { error }  -> Err { error = error },
 }
 
 ## Constructors — lift a Mezze primitive into a JsForeign so it can be passed as

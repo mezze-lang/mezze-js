@@ -5,7 +5,9 @@
 #   1. TYPE-LEVEL (mez check, no guest runtime). `verb_coverage` references
 #      every JsForeign verb and both constructor families in well-typed
 #      positions. If the provider drops or renames a verb, changes a verb's
-#      shape, or breaks the `impl Result JsForeign InteropError` mirror (a
+#      shape. There is NO `Result` mirror any more: the verbs live on
+#      JsForeign alone, an entry point yields a bare error-carrying
+#      foreign, and the error surfaces once at a crossing verb.
 #      producer verb that forgets `lift` can no longer launder a bare foreign
 #      into a Result — the toolchain's #22 gate rejects it), this stops
 #      compiling. That makes `mez check` alone an enforceable conformance gate.
@@ -30,9 +32,14 @@ use std::int
 
 ## ── Layer 1: type-level verb coverage ───────────────────────────────────────
 ## Reference every JsForeign verb once. Never meaningfully executed; its job is
-## to force the compiler to confirm the whole surface exists and type-checks
-## (including the Result mirror, since each verb is also called on a Result-
-## typed receiver in `main`). A missing/renamed verb fails `mez check` here.
+## to force the compiler to confirm the whole surface exists and type-checks. A
+## missing/renamed verb fails `mez check` here.
+##
+## THERE IS NO LONGER A `Result` MIRROR to check. The verbs live on `JsForeign`
+## only, as in the reference provider: an entry point yields a bare
+## ERROR-CARRYING foreign, so producer verbs chain on the foreign and the error
+## surfaces once at a value-out verb. `main` below chains straight off
+## `Js.eval { … }` and needs no Result-typed receiver.
 let verb_coverage: { x: JsForeign } -> {}
   = { x } -> do
     # producer verbs — bare JsForeign -> JsForeign (chainable)
@@ -114,7 +121,7 @@ let want_ints: { label: Str, got: Result [Int] InteropError, want: [Int] } -> In
     Err { error = _ } -> fail { label = label, detail = "guest error" }
 
 ## An Err-carrying producer must pattern-match as Err, not crash — the core of
-## the lift/mirror contract.
+## the producer-chains-on-the-foreign contract.
 let want_err: { label: Str, got: Result Int InteropError } -> Int <Log>
   = { label, got } -> match got is
     Ok { val = _ } -> fail { label = label, detail = "expected Err, got Ok" }
