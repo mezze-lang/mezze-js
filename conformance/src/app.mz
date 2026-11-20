@@ -26,9 +26,12 @@ use std::polyglot::core::{ InteropError }
 use mezze_js::js::{
   Js, GraalJs, GraalJsWith, JsForeign, js_defaults,
   from_int, from_float, from_str, from_bool, null_val,
-  js_list, js_ints, js_floats, js_strs, js_bools, js_dict
+  js_list, js_ints, js_floats, js_strs, js_bools, js_dict,
+  js_fn, js_fn1, js_fn2
 }
 use std::int
+use std::result
+use std::collections::seq
 
 ## ── Layer 1: type-level verb coverage ───────────────────────────────────────
 ## Reference every JsForeign verb once. Never meaningfully executed; its job is
@@ -40,13 +43,17 @@ use std::int
 ## ERROR-CARRYING foreign, so producer verbs chain on the foreign and the error
 ## surfaces once at a value-out verb. `main` below chains straight off
 ## `Js.eval { … }` and needs no Result-typed receiver.
-let verb_coverage: { x: JsForeign } -> {}
+let verb_coverage: { x: JsForeign } -> {} <*>
   = { x } -> do
     # producer verbs — bare JsForeign -> JsForeign (chainable)
     let _ = x.property { name = "p" }
     let _ = x.set_property { name = "p", val = x }
     let _ = x.call { args = [x] }
     let _ = x.method { name = "m", args = [x] }
+    # callbacks — a Mezze function crossing to JS by reference; its row is EMPTY
+    let _ = x.call { args = [ js_fn  { f = { args } -> seq::size { xs = args } } ] }
+    let _ = x.call { args = [ js_fn1 { f = { x } -> x } ] }
+    let _ = x.call { args = [ js_fn2 { f = { a, _b } -> a } ] }
     let _ = x.new { args = [x] }
     let _ = x.index { i = 0 }
     let _ = x.set_index { i = 0, val = x }
@@ -159,6 +166,42 @@ let behavioural: {} -> Int <Js, Log, *>
     # error-carrying producer: reading a member of a number yields an errored
     # foreign; coercing it must surface as Err, never crash the match.
     let k = want_err { label = "errored producer -> Err", got = Js.eval { source = "(42).nope.deeper" }.int {} }
+    # callbacks: JS calls a Mezze function. `js_fn1` under Array.map needs the one-arg
+    # wrapper because map passes (value, index, array) — three arguments — and a
+    # fixed-arity callable makes that JS's arity error (checked next).
+    let cb1 = want_ints {
+      label = "js_fn1 under map",
+      got = Js.eval { source = "(f) => [1, 2, 3].map(x => f(x))" }
+        .call { args = [ js_fn1 { f = { x } -> result::get_or { result = x.int {}, def = 0 } * 10 } ] }.to_ints {},
+      want = [10, 20, 30],
+    }
+    let cb2 = want_int {
+      label = "js_fn2 under reduce",
+      got = Js.eval { source = "(f) => [1, 2, 3, 4].reduce((a, b) => f(a, b), 0)" }
+        .call { args = [ js_fn2 { f = { a, b } -> result::get_or { result = a.int {}, def = 0 } + result::get_or { result = b.int {}, def = 0 } } ] }.int {},
+      want = 10,
+    }
+    let cb3 = want_int {
+      label = "js_fn is variadic",
+      got = Js.eval { source = "(f) => f(1, 2, 3)" }
+        .call { args = [ js_fn { f = { args } -> seq::size { xs = args } } ] }.int {},
+      want = 3,
+    }
+    let cb4 = want_str {
+      label = "wrong arity is JS's error",
+      got = Js.eval { source = "(f) => { try { f(1, 2); return 'no error' } catch (e) { return 'threw' } }" }
+        .call { args = [ js_fn1 { f = { _x } -> 0 } ] }.str {},
+      want = "threw",
+    }
+    # a `then` callback is a JS JOB: GraalJS runs it when the stack empties at the
+    # end of the call that resolved the promise — no event loop, no thread.
+    let cb5 = want_int {
+      label = "promise.then callback ran at the end of the call",
+      got = Js.eval { source = "(f) => { const box = { v: 0 }; Promise.resolve(5).then(x => { box.v = f(x) }); return box }" }
+        .call { args = [ js_fn1 { f = { x } -> result::get_or { result = x.int {}, def = 0 } * 10 } ] }
+        .property { name = "v" }.int {},
+      want = 50,
+    }
     let s1 = int::add { l = a, r = b }
     let s2 = int::add { l = s1, r = c }
     let s3 = int::add { l = s2, r = d }
@@ -168,7 +211,12 @@ let behavioural: {} -> Int <Js, Log, *>
     let s7 = int::add { l = s6, r = h }
     let s8 = int::add { l = s7, r = i }
     let s9 = int::add { l = s8, r = j }
-    int::add { l = s9, r = k }
+    let s10 = int::add { l = s9, r = k }
+    let s11 = int::add { l = s10, r = cb1 }
+    let s12 = int::add { l = s11, r = cb2 }
+    let s13 = int::add { l = s12, r = cb3 }
+    let s14 = int::add { l = s13, r = cb4 }
+    int::add { l = s14, r = cb5 }
 
 let main = {} -> perform Console in perform SystemProcess in do
   let _ = println { msg = "== mezze-js conformance ==" }

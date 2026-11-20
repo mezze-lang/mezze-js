@@ -261,3 +261,23 @@ pub let js_bools:  { vals: [Bool] }  -> JsForeign <*> = { vals } ->
 ## Keys keep the order they were given in.
 pub let js_dict: { keys: [JsForeign], vals: [JsForeign] } -> JsForeign <*> = { keys, vals } ->
   perform Runtime in Polyglot.box_dict { keys = keys, vals = vals, lang = "js" }
+
+## A Mezze function as a JavaScript callable. JS functions are POSITIONAL and
+## VARIADIC, so the natural form is `js_fn`: whatever JS passes arrives as one
+## `args` list of `JsForeign` (decode with `.int{}` / `.str{}`). `js_fn1` / `js_fn2`
+## fix the arity for the everyday callback shapes — `arr.map(f)`, `promise.then(f)`,
+## `reduce(f)` — and JS calling with the wrong count is JS's arity error, thrown to
+## JS. The function's row is EMPTY on purpose: JS calls it OUTSIDE every `perform`
+## (GraalJS runs on the thread that entered it, callbacks included), so it may do
+## nothing that needs a handler — completing a promise is the model use.
+##
+## GraalJS has no event loop of its own: a `then` callback is a JOB that runs when
+## control returns to JS with an empty stack, i.e. at the end of the Mezze call that
+## resolved the promise, or on the next call into JS. A reactor built on JS promises
+## therefore pumps by calling into JS; it never needs a thread.
+pub let js_fn:  { f: { args: [JsForeign] } -> 'r } -> JsForeign <*> = { f } ->
+  perform Runtime in Polyglot.box_fn  { f = f, lang = "js" }
+pub let js_fn1: { f: { x: JsForeign } -> 'r } -> JsForeign <*> = { f } ->
+  perform Runtime in Polyglot.box_fn1 { f = f, lang = "js" }
+pub let js_fn2: { f: { a: JsForeign, b: JsForeign } -> 'r } -> JsForeign <*> = { f } ->
+  perform Runtime in Polyglot.box_fn2 { f = f, lang = "js" }
