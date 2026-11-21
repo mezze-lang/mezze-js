@@ -53,7 +53,7 @@ let verb_coverage: { x: JsForeign } -> {} <*>
     # callbacks — a Mezze function crossing to JS by reference; its row is EMPTY
     let _ = x.call { args = [ js_fn  { f = { args } -> seq::size { xs = args } } ] }
     let _ = x.call { args = [ js_fn1 { f = { x } -> x } ] }
-    let _ = x.call { args = [ js_fn2 { f = { a, _b } -> a } ] }
+    let _ = x.call { args = [ js_fn2 { f = { a, b } -> a } ] }
     let _ = x.new { args = [x] }
     let _ = x.index { i = 0 }
     let _ = x.set_index { i = 0, val = x }
@@ -190,7 +190,7 @@ let behavioural: {} -> Int <Js, Log, *>
     let cb4 = want_str {
       label = "wrong arity is JS's error",
       got = Js.eval { source = "(f) => { try { f(1, 2); return 'no error' } catch (e) { return 'threw' } }" }
-        .call { args = [ js_fn1 { f = { _x } -> 0 } ] }.str {},
+        .call { args = [ js_fn1 { f = { x } -> 0 } ] }.str {},
       want = "threw",
     }
     # a `then` callback is a JS JOB: GraalJS runs it when the stack empties at the
