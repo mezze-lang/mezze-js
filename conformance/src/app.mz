@@ -48,35 +48,35 @@ use std::collections::seq
 let verb_coverage: { x: JsForeign } -> {} <*>
   = { x } -> do
     # producer verbs — bare JsForeign -> JsForeign (chainable)
-    let _ = x.property { name = "p" }
-    let _ = x.set_property { name = "p", val = x }
-    let _ = x.call { args = [x] }
-    let _ = x.method { name = "m", args = [x] }
+    x.property { name = "p" }
+    x.set_property { name = "p", val = x }
+    x.call { args = [x] }
+    x.method { name = "m", args = [x] }
     # callbacks — a Mezze function crossing to JS by reference; its row is EMPTY
-    let _ = x.call { args = [ js_fn  { f = { args } -> seq::size { xs = args } } ] }
-    let _ = x.call { args = [ js_fn1 { f = { x } -> x } ] }
-    let _ = x.call { args = [ js_fn2 { f = { a, b } -> a } ] }
-    let _ = x.new { args = [x] }
-    let _ = x.index { i = 0 }
-    let _ = x.set_index { i = 0, val = x }
-    let _ = x.key { of = x }
-    let _ = x.set_key { of = x, val = x }
-    let _ = x.entries {}
+    x.call { args = [ js_fn  { f = { args } -> seq::size { xs = args } } ] }
+    x.call { args = [ js_fn1 { f = { x } -> x } ] }
+    x.call { args = [ js_fn2 { f = { a, b } -> a } ] }
+    x.new { args = [x] }
+    x.index { i = 0 }
+    x.set_index { i = 0, val = x }
+    x.key { of = x }
+    x.set_key { of = x, val = x }
+    x.entries {}
     # crossing verbs — JsForeign -> Result ... InteropError
-    let _ = x.has { name = "p" }
-    let _ = x.len {}
-    let _ = x.to_seq {}
-    let _ = x.to_ints {}
-    let _ = x.to_floats {}
-    let _ = x.to_strs {}
-    let _ = x.to_bools {}
-    let _ = x.int {}
-    let _ = x.float {}
-    let _ = x.str {}
-    let _ = x.bool {}
-    let _ = x.is_null {}
-    let _ = x.type_name {}
-    let _ = x.check {}
+    x.has { name = "p" }
+    x.len {}
+    x.to_seq {}
+    x.to_ints {}
+    x.to_floats {}
+    x.to_strs {}
+    x.to_bools {}
+    x.int {}
+    x.float {}
+    x.str {}
+    x.bool {}
+    x.is_null {}
+    x.type_name {}
+    x.check {}
     {}
 
 ## Constructor coverage — every lift-a-primitive and bulk-box entry point.
@@ -94,12 +94,12 @@ let ctor_coverage: {} -> [JsForeign] <*>
 ## Each returns 0 on pass, 1 on fail, printing the outcome. `main` sums them.
 let pass: { label: Str } -> Int <Log>
   = { label } -> do
-    let _ = println { msg = "  ok    $(label)" }
+    println { msg = "  ok    $(label)" }
     0
 
 let fail: { label: Str, detail: Str } -> Int <Log>
   = { label, detail } -> do
-    let _ = println { msg = "  FAIL  $(label): $(detail)" }
+    println { msg = "  FAIL  $(label): $(detail)" }
     1
 
 let want_int: { label: Str, got: Result Int InteropError, want: Int } -> Int <Log>
@@ -232,23 +232,23 @@ let behavioural: {} -> Int <Js, Log, *>
     int::add { l = s16, r = cd2 }
 
 let main = {} -> perform Console in perform SystemProcess in do
-  let _ = println { msg = "== mezze-js conformance ==" }
-  let _ = println { msg = "" }
+  println { msg = "== mezze-js conformance ==" }
+  println { msg = "" }
 
-  let _ = println { msg = "GraalJs (ambient):" }
+  println { msg = "GraalJs (ambient):" }
   let ambient =
     perform GraalJs in do
       behavioural {}
 
-  let _ = println { msg = "" }
-  let _ = println { msg = "GraalJsWith (sandbox boot, permissive defaults):" }
+  println { msg = "" }
+  println { msg = "GraalJsWith (sandbox boot, permissive defaults):" }
   let sandboxed =
     perform GraalJsWith { config = js_defaults } in do
       behavioural {}
 
   let total = int::add { l = ambient, r = sandboxed }
-  let _ = println { msg = "" }
+  println { msg = "" }
   if total == 0 then println { msg = "== all conformance checks passed ==" }
   else do
-    let _ = println { msg = "== CONFORMANCE FAILED: $(int::to_str { n = total }) check(s) ==" }
+    println { msg = "== CONFORMANCE FAILED: $(int::to_str { n = total }) check(s) ==" }
     exit { code = 1 }

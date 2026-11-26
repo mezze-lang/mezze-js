@@ -90,7 +90,7 @@ impl Js for GraalJsWith { config: { allow_io: Bool, allow_native: Bool, allow_cr
   initialize_scope = {} -> perform Runtime in Polyglot.open_context { lang = "js", config = config },
   ## Tear the inner context down at scope exit; a held foreign errors after this.
   finalize_scope = {} -> do
-    let _ = perform Runtime in Polyglot.close_context { ctx = scope }
+    perform Runtime in Polyglot.close_context { ctx = scope }
     {},
   ## Evaluate IN the inner context — `eval_in` yields a live foreign over the result,
   ## tagged with the context so the object API keeps working.
