@@ -23,6 +23,8 @@
 use std::effects::log::{ println, Console, Log }
 use std::effects::process::{ exit, SystemProcess }
 use std::polyglot::core::{ InteropError }
+use std::codec::core::{ DecodeError }
+use mezze_js::codec::{ ToJs, FromJs }
 use mezze_js::js::{
   Js, GraalJs, GraalJsWith, JsForeign, js_defaults,
   from_int, from_float, from_str, from_bool, null_val,
@@ -202,6 +204,15 @@ let behavioural: {} -> Int <Js, Log, *>
         .property { name = "v" }.int {},
       want = 50,
     }
+    # codec: a Mezze value crosses into JS and back through the codec abilities.
+    # The conformance app never imported the codec, so a stdlib signature change
+    # (Decode gaining its input type) broke it unnoticed.
+    let cd1 = want_int { label = "codec to_js", got = 42.to_js {}.int {}, want = 42 }
+    let back: Result Int DecodeError = from_int { val = 7 }.from_js {}
+    let cd2 = match back is
+      Ok { val = n } -> if n == 7 then pass { label = "codec from_js" }
+        else fail { label = "codec from_js", detail = "got $(int::to_str { n = n }), want 7" }
+      Err { error = _ } -> fail { label = "codec from_js", detail = "decode error" }
     let s1 = int::add { l = a, r = b }
     let s2 = int::add { l = s1, r = c }
     let s3 = int::add { l = s2, r = d }
@@ -216,7 +227,9 @@ let behavioural: {} -> Int <Js, Log, *>
     let s12 = int::add { l = s11, r = cb2 }
     let s13 = int::add { l = s12, r = cb3 }
     let s14 = int::add { l = s13, r = cb4 }
-    int::add { l = s14, r = cb5 }
+    let s15 = int::add { l = s14, r = cb5 }
+    let s16 = int::add { l = s15, r = cd1 }
+    int::add { l = s16, r = cd2 }
 
 let main = {} -> perform Console in perform SystemProcess in do
   let _ = println { msg = "== mezze-js conformance ==" }

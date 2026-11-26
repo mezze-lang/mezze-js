@@ -82,7 +82,7 @@ impl EncodeOption for JsC having 'out = JsForeign where {
 
 ## `type_name` is an error-label probe that itself returns `Result Str InteropError`
 ## (it performs <Polyglot>); a probe that errors just yields "unknown".
-let tname: { f: JsForeign } -> Str <...> = { f } -> match f.type_name {} is
+let tname: { f: JsForeign } -> Str = { f } -> match f.type_name {} is
   Ok { val = t } -> t
   Err { error = _ } -> "unknown"
 
@@ -389,6 +389,6 @@ ability FromJs 'a for 'in where {
 }
 
 impl FromJs 'a for JsForeign where {
-  from_js:      { it: JsForeign }               with Decode JsC 'a -> Result 'a DecodeError = { it }         -> it.decode { config = js_default },
-  from_js_with: { it: JsForeign, config: JsC }  with Decode JsC 'a -> Result 'a DecodeError = { it, config } -> it.decode { config = config },
+  from_js:      { it: JsForeign }               with Decode JsC 'a JsForeign -> Result 'a DecodeError = { it }         -> it.decode { config = js_default },
+  from_js_with: { it: JsForeign, config: JsC }  with Decode JsC 'a JsForeign -> Result 'a DecodeError = { it, config } -> it.decode { config = config },
 }
