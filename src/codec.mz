@@ -84,12 +84,12 @@ impl EncodeOption for JsC having 'out = JsForeign where {
 ## (it performs <Polyglot>); a probe that errors just yields "unknown".
 let tname: { f: JsForeign } -> Str = { f } -> match f.type_name {} is
   Ok { val = t } -> t
-  Err { error = _ } -> "unknown"
+  Err { ... } -> "unknown"
 
 impl DecodeScalar for JsC having 'in = JsForeign where {
   decode_int = { it, val, ctx } -> match val.int{} is
     Ok { val = n } -> Ok { val = n }
-    Err { error = _ } -> decode_error {
+    Err { ... } -> decode_error {
       path = ctx.path,
       message = "Expected Foreign coercible to Int",
       expected = "Int",
@@ -97,7 +97,7 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
     },
   decode_float = { it, val, ctx } -> match val.float{} is
     Ok { val = n } -> Ok { val = n }
-    Err { error = _ } -> decode_error {
+    Err { ... } -> decode_error {
       path = ctx.path,
       message = "Expected Foreign coercible to Float",
       expected = "Float",
@@ -105,7 +105,7 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
     },
   decode_str = { it, val, ctx } -> match val.str{} is
     Ok { val = s } -> Ok { val = s }
-    Err { error = _ } -> decode_error {
+    Err { ... } -> decode_error {
       path = ctx.path,
       message = "Expected Foreign coercible to Str",
       expected = "Str",
@@ -113,7 +113,7 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
     },
   decode_bool = { it, val, ctx } -> match val.bool{} is
     Ok { val = b } -> Ok { val = b }
-    Err { error = _ } -> decode_error {
+    Err { ... } -> decode_error {
       path = ctx.path,
       message = "Expected Foreign coercible to Bool",
       expected = "Bool",
@@ -128,7 +128,7 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
         expected = "Frac",
         found = Some { val = tname { f = val } },
       }
-    Err { error = _ } -> decode_error {
+    Err { ... } -> decode_error {
       path = ctx.path,
       message = "Expected Foreign coercible to Frac",
       expected = "Frac",
@@ -149,7 +149,7 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
         expected = "Char",
         found = Some { val = s },
       }
-    Err { error = _ } -> decode_error {
+    Err { ... } -> decode_error {
       path = ctx.path,
       message = "Expected Foreign coercible to Char",
       expected = "Char",
@@ -164,7 +164,7 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
         expected = "Nat",
         found = Some { val = "negative integer" },
       }
-    Err { error = _ } -> decode_error {
+    Err { ... } -> decode_error {
       path = ctx.path,
       message = "Expected Foreign coercible to Nat",
       expected = "Nat",
@@ -175,7 +175,7 @@ impl DecodeScalar for JsC having 'in = JsForeign where {
 impl DecodeOption for JsC having 'in = JsForeign where {
   decode_option = { it, val, ctx } -> match val.is_null{} is
     Ok { val = b } -> if b then Ok { val = None } else Ok { val = Some { val = val } }
-    Err { error = _ } -> Ok { val = Some { val = val } },
+    Err { ... } -> Ok { val = Some { val = val } },
 }
 
 
@@ -251,7 +251,7 @@ let pair_entry_of: { p: JsForeign } -> Option { key: JsForeign, value: JsForeign
         Some { val = v } -> Some { val = { key = k, value = v } }
         None -> None
       None -> None
-    Err { error = _ } -> None
+    Err { ... } -> None
 
 ## Every pair, or None if any one is malformed — a half-read map is worse than a
 ## reported failure.
@@ -273,7 +273,7 @@ let read_pairs:
 impl DecodeSequence for JsC having 'in = JsForeign where {
   decode_sequence = { it, val, ctx } -> match val.to_seq {} is
     Ok { val = es } -> Ok { val = es }
-    Err { error = _ } -> decode_error {
+    Err { ... } -> decode_error {
       path = ctx.path,
       message = "Expected an array-shaped Foreign",
       expected = "List",
@@ -287,25 +287,25 @@ impl DecodeSequence for JsC having 'in = JsForeign where {
 impl DecodeScalarSequence for JsC having 'in = JsForeign where {
   decode_int_seq = { it, val, ctx } -> match val.to_ints {} is
     Ok { val = xs } -> Ok { val = xs }
-    Err { error = _ } -> decode_error {
+    Err { ... } -> decode_error {
       path = ctx.path, message = "Expected an array of Int-coercible Foreigns",
       expected = "[Int]", found = Some { val = tname { f = val } },
     },
   decode_float_seq = { it, val, ctx } -> match val.to_floats {} is
     Ok { val = xs } -> Ok { val = xs }
-    Err { error = _ } -> decode_error {
+    Err { ... } -> decode_error {
       path = ctx.path, message = "Expected an array of Float-coercible Foreigns",
       expected = "[Float]", found = Some { val = tname { f = val } },
     },
   decode_str_seq = { it, val, ctx } -> match val.to_strs {} is
     Ok { val = xs } -> Ok { val = xs }
-    Err { error = _ } -> decode_error {
+    Err { ... } -> decode_error {
       path = ctx.path, message = "Expected an array of Str-coercible Foreigns",
       expected = "[Str]", found = Some { val = tname { f = val } },
     },
   decode_bool_seq = { it, val, ctx } -> match val.to_bools {} is
     Ok { val = xs } -> Ok { val = xs }
-    Err { error = _ } -> decode_error {
+    Err { ... } -> decode_error {
       path = ctx.path, message = "Expected an array of Bool-coercible Foreigns",
       expected = "[Bool]", found = Some { val = tname { f = val } },
     },
@@ -321,7 +321,7 @@ impl DecodeMapping for JsC having 'in = JsForeign where {
         expected = "Map",
         found = Some { val = tname { f = val } },
       }
-    Err { error = _ } -> decode_error {
+    Err { ... } -> decode_error {
       path = ctx.path,
       message = "Expected a hash-shaped Foreign",
       expected = "Map",
@@ -333,8 +333,8 @@ impl DecodeRecord for JsC having 'in = JsForeign where {
   decode_record_field = { it, val, key, ctx } -> do
     let f = val.key { of = key }
     match f.check {} is
-      Ok  { val = _ } -> Ok { val = f }
-      Err { error = _ } -> decode_error {
+      Ok  { ... } -> Ok { val = f }
+      Err { ... } -> decode_error {
         path = ctx.path,
         message = "Missing field: $(key)",
         expected = key,
@@ -349,19 +349,19 @@ impl DecodeVariant for JsC having 'in = JsForeign where {
   decode_variant = { it, val, ctx } -> do
     let t = val.key { of = "tag" }
     match t.check {} is
-      Ok { val = _ } -> match t.str {} is
+      Ok { ... } -> match t.str {} is
         Ok { val = tag } -> do
           let p = val.key { of = "value" }
           match p.check {} is
-            Ok  { val = _ } -> Ok { val = { tag = tag, payload = Some { val = p } } }
-            Err { error = _ } -> Ok { val = { tag = tag, payload = None } }
-        Err { error = _ } -> decode_error {
+            Ok  { ... } -> Ok { val = { tag = tag, payload = Some { val = p } } }
+            Err { ... } -> Ok { val = { tag = tag, payload = None } }
+        Err { ... } -> decode_error {
           path = ctx.path,
           message = "Variant tag is not a string",
           expected = "Str",
           found = Some { val = tname { f = t } },
         }
-      Err { error = _ } -> decode_error {
+      Err { ... } -> decode_error {
         path = ctx.path,
         message = "Expected a Foreign with a 'tag' entry",
         expected = "Variant",
